@@ -2,6 +2,7 @@ Local Set Universe Polymorphism.
 Unset Universe Minimization ToSet.
 
 Require Import PArith.
+Local Open Scope positive.
 Require EGraphList.
 Import EGraphList.
 Import EGraphList.ListNotations.
@@ -19,6 +20,15 @@ Section DeepType.
     | TBase e => EGraphList.nth (Pos.to_nat e - 1) typemap unit
     | TArrow A B => (t_denote typemap A) -> (t_denote typemap B)
     end.
+
+  Fixpoint type_eqb (t1 t2 : type) : bool :=
+  match t1, t2 with
+  | TBase n, TBase n' =>
+    Pos.eqb n n'
+  | TArrow a b, TArrow a' b' =>
+    type_eqb a a' && type_eqb b b'
+  | _,_ => false
+  end.
 End DeepType.
 
 Notation "A '~>' B" := (TArrow A B) (right associativity, at level 20).
@@ -37,8 +47,36 @@ Inductive term : type -> Type :=
     | TConst : forall (n : positive) (t: type),
       term t.
 
+Inductive dyn {typemap : list Type} :=
+  mk_dyn { dyn_type : type ; 
+    dyn_val : t_denote typemap dyn_type }.
+Arguments dyn : clear implicits.
 
-Definition interp_term (typemap : list Type) (constmap : list )  (varmap : list ) 
+Check mk_dyn [positive] `1 3.
+Section wf_term.
+Context (typemap : list Type) (constmap : list (dyn typemap)) (varmap : list (dyn typemap)).
+Fixpoint wf_term {t : type} (a : term t) :=
+  match a with 
+  | TApp fn arg => 
+    andb (wf_term fn) (wf_term arg)
+  | TVar n t =>
+    match nth_error varmap (Pos.to_nat n - 1) with
+    | Some d => 
+      type_eqb (dyn_type d) t
+    | None =>
+      false
+    end
+  | TConst n t =>
+    match nth_error constmap (Pos.to_nat n - 1) with
+    | Some d => 
+      type_eqb (dyn_type d) t
+    | None =>
+      false
+    end
+  end.
+End wf_term.
+
+Definition interp_term (typemap : list Type) (constmap : list)  (varmap : list ) 
 {t : type} (a : term t)
 : t_denote typemap t.
  induction f.
@@ -71,14 +109,6 @@ Section egraphs.
     unfold "<>" in n. exfalso. apply n. reflexivity.
   Qed.
 
-  Fixpoint dt_eq (t1 t2 : type) : bool :=
-  match t1, t2 with
-  | TBase n, TBase n' =>
-    Nat.eqb n n'
-  | TArrow a b, TArrow a' b' =>
-    dt_eq a a'&& dt_eq b b'
-  | _,_ => false
-  end.
 
   Definition dt_eq_correct : forall (t1 t2 : type ),
     dt_eq t1 t2 = true -> t1 = t2.

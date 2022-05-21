@@ -1,227 +1,46 @@
-Require Import Ring.
-
-Require Import Classes.RelationClasses.
-
 Local Set Universe Polymorphism.
 Unset Universe Minimization ToSet.
 
-Definition index := nat.
-Ltac CASE l ret :=
-let __ := match O with
-| _ => assert_succeeds l
-end in ret.
-
-Require Sponge.EGraphList.
-Module NonSamsam.
+Require Import PArith.
+Require EGraphList.
 Import EGraphList.
+Import EGraphList.ListNotations.
 
-Ltac inList e l :=
-  lazymatch l with
-  | nil =>
-  false
-  | cons ?t ?l =>
-    let res := match O with
-    | _ =>
-    CASE ltac:(
-      first [constr_eq e t ]
-      (* idtac "test" t e l; *)
-      (* let yoyo := fresh in assert (t = e) as yoyo by reflexivity; clear yoyo] *)
-      ) true
-    | _ =>
-    inList e l
-    end in res
-  end.
 
-Ltac indexList e l :=
-  match l with
-  | nil => constr:(false)
-  | cons e _ => constr:(O%nat)
-  | cons _ ?l =>
-    let n := indexList e l in
-    constr:((S n)%nat)
-  end.
-
-Ltac addList e l :=
-  let member := inList e l in
- (* let __ := match O with | _ => idtac "addlist" e l member end in *)
-  match member with
-  | true => l
-  | false =>
-  let newl := eval cbv [app] in (app l (cons e nil)) in
- (* let __ := match O with | _ => idtac "appendlist" end in *)
-   newl
-  end.
 Section DeepType.
-  Inductive deep_type :=
-   | base : forall (t : nat), deep_type
-   | arrow1: deep_type -> deep_type -> deep_type.
+  Inductive type :=
+   | TBase : forall (t : positive), type
+   | TArrow: type -> type -> type.
 
   Fixpoint t_denote
-    {typemap : list Type}
-    (d : deep_type) :=
+    (typemap : list Type)
+    (d : type) :=
     match d with
-    | base e => EGraphList.nth e typemap unit
-    | arrow1 A B => (t_denote (typemap := typemap) A) -> (t_denote (typemap := typemap) B)
+    | TBase e => EGraphList.nth (Pos.to_nat e - 1) typemap unit
+    | TArrow A B => (t_denote typemap A) -> (t_denote typemap B)
     end.
-
-  Inductive SModule {typemap : list Type} :=
-    { T : deep_type ; state : t_denote (typemap := typemap) T }.
-
-  Definition generic_embed {typemap : list Type} (T': deep_type ) (s:t_denote (typemap := typemap)T') :=
-    {| T:= T'; state := s |}.
 End DeepType.
 
-Notation "A '~>' B" := (arrow1 A B) (right associativity, at level 20).
-Notation "'`' A " := (base A) (at level 1, format "'`' A").
+Notation "A '~>' B" := (TArrow A B) (right associativity, at level 20).
+Notation "'`' A " := (TBase A) (at level 1, format "'`' A").
 
-(* Check (t_denote `nat).
-Eval simpl in (t_denote (`nat ~> `False)). *)
+Eval simpl in (t_denote [nat] `1).
+Eval simpl in (t_denote [nat : Type; Prop] (`1 ~> `2)).
 
-Notation "'<<' s '>>'" := (generic_embed s) (only parsing).
-
-Ltac funToArrow tmap t :=
-  match t with
-  | ?a -> ?b =>
-    let s1 := funToArrow tmap a in
-    let s2 := funToArrow tmap b in
-    constr:(s1 ~> s2)
-  | _ =>
-    let dt := indexList t tmap in
-     constr:(base dt)
-  end.
-
-(* Le probleme c'set qu'il faut rajouter les base types aussi *)
-Ltac listTypesFromProp acc input_prop :=
- (* let __ := match O with | _ => idtac "listnewitem" acc input_prop end in *)
-  match input_prop with
-  | ?a ?b  =>
-    lazymatch type of b with 
-    | Prop => 
-    let acc' := listTypesFromProp acc a in
- (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
-    let acc'' := listTypesFromProp acc' b in
-    let t := type of input_prop in
-    match t with 
-    | _ -> _ => 
-      acc''
-    | _ =>
-     addList (t:Type) acc''
-     end
-        | Type => fail
-        | _ => 
-    let acc' := listTypesFromProp acc a in
- (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
-    let acc'' := listTypesFromProp acc' b in
- (* let __ := match O with | _ => idtac "listnew2" acc'' end in *)
-    let t := type of input_prop in
-    match t with 
-    | _ -> _ => 
-      acc''
-    | _ =>
-     addList (t:Type) acc''
-     end
-    end
-  | ?a =>
-    let t := type of a in
-    match t with 
-    | _ -> _ => 
-      acc 
-    | _ =>
-    addList (t : Type) acc
-    end
-  end.
+Inductive term : type -> Type :=
+    | TApp: forall {t td},
+      term (t ~> td) ->
+      term t ->
+      term td
+    | TVar : forall (n : positive) (t: type),
+      term t
+    | TConst : forall (n : positive) (t: type),
+      term t.
 
 
-Ltac listFromProp tmap acc input_prop :=
-  match input_prop with
-  | ?a ?b  =>
-     lazymatch type of b with 
-     |Prop => 
-  let acc := listFromProp tmap acc a in
-    let acc := listFromProp tmap acc b in
-    acc
-        | Type => fail
-        | _ => 
-    let acc := listFromProp tmap acc a in
-    let acc := listFromProp tmap acc b in
-    acc
-        end
-  | ?a =>
-    let t := type of a in
-    let deeply_represented := funToArrow tmap t in
-    addList {| T := deeply_represented ; state := a : (t_denote (typemap:= tmap) deeply_represented)|} acc
-  end.
-
-
-Goal forall A C (D:Prop),
-  A /\ A \/ C -> False.
-  intros.
-  let t := type of H in
-  let tmap := listTypesFromProp (nil : list Type) t in
-  let map := listFromProp tmap (nil : list (SModule (typemap := tmap))) t in
-  idtac tmap;
-  idtac map.
-  Abort.
-
-
-Require Import PArith.
-
-(* Type of a varmap *)
-Definition asgn (tmap : list Type) := list (SModule (typemap := tmap)).
-
-Section Formula.
-  Context {typemap : list Type}.
-  Inductive Formula {ctx: asgn typemap} : deep_type -> Type :=
-      | App1: forall {t td},
-        Formula (t ~> td) ->
-        Formula t ->
-        Formula td
-      | Atom1 : forall (n : positive) t0,
-        EGraphList.nth_error ctx ((Pos.to_nat n) - 1) = Some t0 ->
-        Formula (T t0).
-
-(* Map deep_type -> Set eclass_id *)
-  Inductive Term : deep_type -> Type :=
-      | TApp1: forall {t td},
-        Term (t ~> td) ->
-        Term t ->
-        Term td
-      | TAtom1 : forall (n : positive) t,
-        Term t.
-
-End Formula.
-
-Notation "a '&&' b" := (andb a b).
-(* Not useful? *)
-Require Import Eqdep.
-
-Axiom A: Prop.
-Axiom B: Prop.
-Definition test_typemap :=
-  (Prop ::  Prop :: (Prop -> Prop -> Prop) :: (Prop -> Prop -> Prop) :: nil)%list.
-
-Compute (t_denote (typemap := test_typemap) (`0 : deep_type )).
-Check (B : t_denote (typemap := test_typemap) (`0 : deep_type )).
-
-    Definition test_varmap :=
-  (generic_embed `0 (B : t_denote (typemap := test_typemap)(`0 : deep_type )) :: (nil : list (SModule (typemap := test_typemap))))%list.
-
-(* Goal A /\ B -> False.
-intros.
-let test_typemap := eval cbv [test_typemap] in test_typemap in
-let test_varmap := eval cbv [test_varmap] in test_varmap in
-let tor := type of or in
-(* let t := build_dtype test_typemap tor in *)
-idtac t.
-Abort. *)
-Definition newvarmap := ( (generic_embed `0 (B : t_denote (typemap := test_typemap)(`0 ))) ::
-                          (generic_embed `0 (A : t_denote (typemap := test_typemap)(`0  ))) ::
-                          (generic_embed (`0 ~> `0 ~> `0) (or : t_denote (typemap := test_typemap) ((`0 ~> `0 ~> `0) ))) ::
-                          (nil : list (SModule (typemap := test_typemap)))).
-Check (@Atom1 test_typemap newvarmap 1 _ eq_refl).
-
-Definition interp_formula  {typemap : list Type} {t : deep_type }
-  (atoms: asgn typemap) (f : Formula (ctx:= atoms) (typemap := typemap) t) : t_denote (typemap := typemap)t.
+Definition interp_term (typemap : list Type) (constmap : list )  (varmap : list ) 
+{t : type} (a : term t)
+: t_denote typemap t.
  induction f.
   -
   cbn in *.
@@ -252,16 +71,16 @@ Section egraphs.
     unfold "<>" in n. exfalso. apply n. reflexivity.
   Qed.
 
-  Fixpoint dt_eq (t1 t2 : deep_type) : bool :=
+  Fixpoint dt_eq (t1 t2 : type) : bool :=
   match t1, t2 with
-  | base n, base n' =>
+  | TBase n, TBase n' =>
     Nat.eqb n n'
-  | arrow1 a b, arrow1 a' b' =>
+  | TArrow a b, TArrow a' b' =>
     dt_eq a a'&& dt_eq b b'
   | _,_ => false
   end.
 
-  Definition dt_eq_correct : forall (t1 t2 : deep_type ),
+  Definition dt_eq_correct : forall (t1 t2 : type ),
     dt_eq t1 t2 = true -> t1 = t2.
     induction t1.
     - cbn.
@@ -285,11 +104,11 @@ Section egraphs.
   Qed.
 
 
-  Fixpoint dt_eq' (t1 t2 : deep_type) : {t1 = t2} + {t1 <> t2}.
+  Fixpoint dt_eq' (t1 t2 : type) : {t1 = t2} + {t1 <> t2}.
   refine (match t1, t2 with
-  | base n, base n' =>
+  | TBase n, TBase n' =>
     _ (Nat.eq_dec n n')
-  | arrow1 a b, arrow1 a' b' =>
+  | TArrow a b, TArrow a' b' =>
     _
   | _,_ => _
   end).
@@ -461,7 +280,7 @@ Section egraphs.
 
   (* Definition set_enodes := PTree.t unit. *)
   Definition map_id_enode :=
-    PTree.t (eclass_id * deep_type * set_enodes).
+    PTree.t (eclass_id * type * set_enodes).
 
   Record egraph := {
     max_allocated : positive;
@@ -875,10 +694,10 @@ Theorem lookupF_canonical e  :
     }
    Qed.
 
-  Fixpoint node_size (t : deep_type ) :=
+  Fixpoint node_size (t : type ) :=
     match t with
-    | base n => 1
-    | arrow1 a b => 1 + node_size a + node_size b
+    | TBase n => 1
+    | TArrow a b => 1 + node_size a + node_size b
     end.
 
   Lemma size_eq_dt : forall t1 t2, dt_eq t1 t2 = true -> node_size t1 = node_size t2.
@@ -3217,7 +3036,7 @@ En partant d'un egraph vide, ajouter quelques noeuds, et query le graph.
 Voir si on peut reduire les ensembles d'une manière qui soit utilisable.
 
 Voir si on peut reconstruire une Formula depuis un enode.
-Grace au type deeply embedded, et la recursion sur les arrows,
+Grace au type deeply embedded, et la recursion sur les TArrows,
 je crois qu'une telle recursion devcrait etre possible structurellement. *)
 Lemma empty_invariant {typemap varmap}: invariant_egraph (typemap:=typemap) (ctx:=varmap) empty_egraph.
 econstructor; firstorder.
@@ -3294,11 +3113,11 @@ Fixpoint propose_formula {typemap} {t}
                           ).
   destruct el.
   refine ( match PTree.get e0 (id2s e), PTree.get e1 (id2s e) with
-     | Some(eid1, arrow1 arg _ret , _), Some (eid2, arg', _) => _
+     | Some(eid1, TArrow arg _ret , _), Some (eid2, arg', _) => _
      | _, _ => nil
      end
   ).
-  pose (propose_formula typemap (arrow1 arg t) ctx e fuel e0).
+  pose (propose_formula typemap (TArrow arg t) ctx e fuel e0).
   pose (propose_formula typemap arg ctx e fuel e1).
   destruct o.
   destruct o0.
@@ -3335,8 +3154,8 @@ Ltac formula_from_node ctx depth e n a :=
 
 Section Pattern.
   Context {typemap : list Type}.
-  Context {quantifiermap : list (deep_type )}.
-  Inductive Pattern {ctx: asgn typemap} : deep_type  -> Type :=
+  Context {quantifiermap : list (type )}.
+  Inductive Pattern {ctx: asgn typemap} : type  -> Type :=
       | PApp1: forall {t td},
         Pattern (t ~> td) ->
         Pattern t ->
@@ -3352,14 +3171,14 @@ Section Pattern.
 
   (* The DeepList represents an instantiation of quantifiers, from the context,
      the values are Formulas from the context? *)
-  Inductive DeepList : list (deep_type ) -> Type :=
-    | DCons : forall (t : deep_type )
+  Inductive DeepList : list (type ) -> Type :=
+    | DCons : forall (t : type )
               (v : t_denote (typemap := typemap) t)
-              {tcdr : list (deep_type )} (cdr : DeepList tcdr),
+              {tcdr : list (type )} (cdr : DeepList tcdr),
       DeepList (t :: tcdr)
     | DNil : DeepList nil.
 
-  Definition add_end {quantifiermap' :list (deep_type )} (l : DeepList quantifiermap') {t : deep_type }
+  Definition add_end {quantifiermap' :list (type )} (l : DeepList quantifiermap') {t : type }
   (* (v : Formula (ctx:= ctx) t)  *)
   (v : t_denote (typemap := typemap)t)
 : DeepList (quantifiermap' ++ (cons t nil)).
@@ -3376,10 +3195,10 @@ Section Pattern.
     eauto.
     Defined.
 
-  Definition app_d {quantifiermap1 :list (deep_type )}
+  Definition app_d {quantifiermap1 :list (type )}
   (l1 : DeepList quantifiermap1) 
 
-  {quantifiermap2 :list (deep_type )}
+  {quantifiermap2 :list (type )}
   (l2 : DeepList quantifiermap2) 
 : DeepList (quantifiermap1 ++ quantifiermap2).
   induction l1.
@@ -3395,7 +3214,7 @@ Section Pattern.
   }
   Defined.
 
-  Definition deep_rev {quantifiermap' :list (deep_type )} (l : DeepList quantifiermap')
+  Definition deep_rev {quantifiermap' :list (type )} (l : DeepList quantifiermap')
 : DeepList (rev quantifiermap').
   induction l.
   2:{
@@ -3433,7 +3252,7 @@ Section Pattern.
     inversion l. exact cdr.
   Defined.
 
-  Definition interp_pattern {t : deep_type }
+  Definition interp_pattern {t : type }
   (quantifiers: DeepList quantifiermap) (f : Pattern (ctx:= ctx) t) : t_denote (typemap := typemap)t.
   induction f.
   -
@@ -3484,8 +3303,8 @@ Section TheoremGenerator.
 
   Fixpoint generate_theorem
     et
-    (quantifiermap : list (deep_type ))
-    (quantifiermapdone : list (deep_type ))
+    (quantifiermap : list (type ))
+    (quantifiermapdone : list (type ))
     (quantifiers : DeepList (typemap := typemap) quantifiermapdone)
     (clc1 : Pattern (quantifiermap := app (quantifiermapdone) quantifiermap) (ctx := ctx) et)
     (clc2 : Pattern (quantifiermap := app (quantifiermapdone) quantifiermap) (ctx := ctx) et)
@@ -3508,7 +3327,7 @@ Section TheoremGenerator.
 
  Definition generate_thm
      et
-    (quantifiermap : list (deep_type ))
+    (quantifiermap : list (type ))
     (clc1 : Pattern (quantifiermap := quantifiermap) (ctx := ctx) et)
     (clc2 : Pattern (quantifiermap := quantifiermap) (ctx := ctx) et) : Type .
     pose proof (generate_theorem et quantifiermap nil DNil clc1 clc2).
@@ -3579,12 +3398,12 @@ Ltac ltac_map f tm l :=
   | nil => uconstr:(nil)
   end.
 
-Fixpoint max_t (t : deep_type) :=
+Fixpoint max_t (t : type) :=
   match t with
   | `n => n
   | a ~> b => max (max_t a) (max_t b)
   end.
-(* Lemma upcast_ok : forall t (varmap : deep_type (typemap := t)), *)
+(* Lemma upcast_ok : forall t (varmap : type (typemap := t)), *)
     (* upcast_deeptype t [] varmap = varmap. *)
 Definition app_nth1
   (A : Type) (l : list A) :
@@ -3650,7 +3469,7 @@ end.
 
 Require Import Lia.
 Definition travel_value :
-forall (typemap : list Type) (t : deep_type )
+forall (typemap : list Type) (t : type )
  typemap_extension,
  (max_t t) <? (length typemap) = true ->
  Prod ( t_denote (typemap := typemap ++ typemap_extension) t -> t_denote (typemap := typemap )t)
@@ -3704,7 +3523,7 @@ forall (typemap : list Type) (t : deep_type )
 Defined.
 
 Definition upcast_value :
-forall (typemap : list Type) (t : deep_type)
+forall (typemap : list Type) (t : type)
  typemap_extension,
  (max_t t) <? (length typemap) = true ->
  (t_denote (typemap := typemap )t -> t_denote (typemap := typemap ++ typemap_extension) t).
@@ -3775,8 +3594,8 @@ Ltac listFromProp' tmap acc input_prop :=
     end
   | ?a =>
     let t := type of a in
-    let deeply_represented := funToArrow tmap t in
-    let newa :=  eval cbv  [ Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in (upcast_value tmap deeply_represented nil eq_refl a) in
+    let deeply_represented := funToTArrow tmap t in
+    let newa :=  eval cbv  [ Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value tmap deeply_represented nil eq_refl a) in
     addList {| T := deeply_represented ; state := newa : (t_denote (typemap:= tmap) deeply_represented)|} acc
   end.
 Ltac reify_prop' quantifiermap typemap varmap prop :=
@@ -3809,9 +3628,9 @@ match prop with
 | ?a =>
   let t := type of a in
   (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" a t end in *)
-  let deeply_represented := funToArrow typemap t in
+  let deeply_represented := funToTArrow typemap t in
   (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" deeply_represented end in *)
-  let newa :=  eval cbv  [  Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in (upcast_value typemap deeply_represented nil eq_refl a) in
+  let newa :=  eval cbv  [  Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value typemap deeply_represented nil eq_refl a) in
   (* idtac deeply_represented a varmap; *)
   let idx := indexList {| T := deeply_represented ; state := newa :(t_denote (typemap:= typemap) deeply_represented) |} varmap in
   (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" idx end in *)
@@ -3850,13 +3669,13 @@ Ltac reify_hyp H oldtypemap oldvarmap x :=
   unify oldtm' typemap;
   pose typemap;
   idtac typemap;
-  let deepify_quant := ltac_map funToArrow typemap quan in
+  let deepify_quant := ltac_map funToTArrow typemap quan in
   let deepify_quant := type_term deepify_quant in
   let oldvm := eval unfold oldvm in oldvm in
   idtac "deepquant" deepify_quant oldtm1 diff oldvm;
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv  [Pos.of_nat Pos.sub Pos.add app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv  [Pos.of_nat Pos.sub Pos.add app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' (a, b) in
   idtac "newvarmap" varmap;
@@ -3914,10 +3733,10 @@ Section Potentials.
   Context {ctx: asgn typemap}.
   (* This structure represent a set of possible instantiation for the quantifiers,
   they might not have the right type? Is that a problem? Maybe I should add this constraint that all the element of the list represent nodes with the right type t *)
-  (* Inductive DeepListPotentials : list (deep_type ) -> Type :=
-    | DConsF : forall (t : deep_type )
+  (* Inductive DeepListPotentials : list (type ) -> Type :=
+    | DConsF : forall (t : type )
               (v : list eclass_id)
-              {tcdr : list (deep_type )} (cdr : DeepListPotentials tcdr),
+              {tcdr : list (type )} (cdr : DeepListPotentials tcdr),
       DeepListPotentials (t :: tcdr)
     | DNilF : DeepListPotentials nil. *)
   Fixpoint dropNone {A:Type} (l : list (option A))  : list A :=
@@ -3927,21 +3746,21 @@ Section Potentials.
     | _ => nil
     end.
 
-  Inductive DeepList2 : list (deep_type ) -> Type :=
-    | DCons2 : forall (t : deep_type )
+  Inductive DeepList2 : list (type ) -> Type :=
+    | DCons2 : forall (t : type )
               (v : Formula (ctx:= ctx) (typemap := typemap)t)
-              {tcdr : list (deep_type )} (cdr : DeepList2 tcdr),
+              {tcdr : list (type )} (cdr : DeepList2 tcdr),
       DeepList2 (t :: tcdr)
     | DNil2 : DeepList2 nil.
 
-  Inductive DeepListEclass : list deep_type -> Type :=
-    | DConsE : forall (t:deep_type) (v : option eclass_id) 
-              {tcdr : list deep_type} (cdr : DeepListEclass tcdr),
+  Inductive DeepListEclass : list type -> Type :=
+    | DConsE : forall (t:type) (v : option eclass_id) 
+              {tcdr : list type} (cdr : DeepListEclass tcdr),
               DeepListEclass (t::tcdr)
     | DNilE : DeepListEclass nil .
 
   Definition FUEL := 30.
-  Definition deeplist2_from_deeplisteclass (quant : list deep_type)
+  Definition deeplist2_from_deeplisteclass (quant : list type)
     (instantiate_quant : DeepListEclass quant) (e : egraph) : option (DeepList2 quant).
   induction quant.
   {
@@ -3970,7 +3789,7 @@ Section Potentials.
   }
   Defined.
 
-  (* Definition deeplist2_from_deeplistPotentials (quant : list (deep_type ))
+  (* Definition deeplist2_from_deeplistPotentials (quant : list (type ))
     (instantiate_quant : DeepListPotentials quant) (e : egraph) : list (DeepList2 quant).
   induction quant.
   {
@@ -3993,7 +3812,7 @@ Section Potentials.
   }
   Defined. *)
 
-  Definition deeplist_from_deeplist2 (quant : list (deep_type ))
+  Definition deeplist_from_deeplist2 (quant : list (type ))
     (instantiate_quant : DeepList2 quant)  : (DeepList (typemap := typemap) quant).
   induction quant.
   {
@@ -4181,7 +4000,7 @@ else
 
 (* I will do translation validation for hte match pattern, that will be the easiest.
 Validator will simply return a boolean if the candidate matches the pattern and hence if the fn is correct *)
-Definition no_constraints (quanttype : list deep_type) : DeepListEclass quanttype.
+Definition no_constraints (quanttype : list type) : DeepListEclass quanttype.
   induction quanttype.
   econstructor.
   econstructor.
@@ -4192,7 +4011,7 @@ Defined.
 (* (0 ( _))
    (42 (_ _)) *)
 (* (_ (_ _ _ _)) *)
-Definition init_consider (quanttype : list deep_type) (e:egraph): list (Prod eclass_id (DeepListEclass quanttype)).
+Definition init_consider (quanttype : list type) (e:egraph): list (Prod eclass_id (DeepListEclass quanttype)).
 (* TODO seq on el *)
   exact (map (fun el => prod (Pos.of_nat el) (no_constraints quanttype)) (seq 0 (Pos.to_nat (max_allocated e)))).
 Defined.
@@ -4210,7 +4029,7 @@ Compute (nth_deep'' 0 (change_nth_deep'' 1 (change_nth_deep'' 0 in0 2%positive) 
 Compute (nth_deep'' 1 (change_nth_deep'' 1 (change_nth_deep'' 0 in0 2%positive) 3%positive)).
 End MiniTEsts.
 
-Fixpoint match_pattern_aux' {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+Fixpoint match_pattern_aux' {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
 (e : egraph )
 (to_consider : list (Prod eclass_id (DeepListEclass quanttype)))
 t (p : Pattern (typemap:=typemap) (ctx:=ctx) (quantifiermap:=quanttype) t) :
@@ -4276,14 +4095,14 @@ list (Prod eclass_id (DeepListEclass quanttype)).
   }
   Defined.
 
-Definition match_pattern_aux {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+Definition match_pattern_aux {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
 (e : egraph )
 t (p : Pattern (typemap:=typemap) (ctx:=ctx) (quantifiermap:=quanttype) t) :
 list (Prod eclass_id (DeepListEclass quanttype)).
 exact (match_pattern_aux' fuel ctx quanttype e (init_consider quanttype e) t p).
 Defined.
 
-Definition match_pattern {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+Definition match_pattern {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
 (* Need to improve this function ... *)
 (e : egraph)
 t (p : Pattern (ctx:=ctx) (quantifiermap:=quanttype) t) :
@@ -4294,7 +4113,7 @@ list
                         | _, _=> None
                       end) (match_pattern_aux fuel ctx quanttype e t p)).
 (* 
-Fixpoint matc{typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+Fixpoint matc{typemap : list Type} (fuel : nat) ctx (quanttype : list type)
 (* Need to improve this function ... *)
 (e : egraph ) 
 (to_consider : DeepListPotentials quanttype) t (p : Pattern (ctx:=ctx) (quantifiermap:=quanttype) t) :
@@ -4392,7 +4211,7 @@ Lemma in_dropNone:
 
 (* The goal of this function is to make sure that the eclass returned follows the pattern prescribed.
 If yues it should be the case that 
-Lemma validator_matcher_correct {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+Lemma validator_matcher_correct {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
 (e : egraph) 
 t (p : Pattern (ctx:=ctx) (quantifiermap:=quanttype) t) 
 (input : Prod eclass_id (DeepListEclass quanttype)) 
@@ -4412,7 +4231,7 @@ induction p. *)
 (* For now,
   The following function is generating potentially of matches for the pattern in the egraph. *)
 Lemma match_pattern_correct :
-  forall {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+  forall {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
   (e : egraph )  t (p : Pattern t),
   Forall 
     (fun f =>
@@ -4544,7 +4363,7 @@ Lemma match_pattern_correct :
   } *)
     Admitted.
 (* Lemma match_pattern_correct :
-  forall {typemap : list Type} (fuel : nat) ctx (quanttype : list deep_type)
+  forall {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
   (e : egraph ) (to_consider : list(DeepList2 quanttype)) t (p : Pattern t),
   Forall 
     (fun f =>
@@ -4616,7 +4435,7 @@ Lemma match_pattern_correct :
   Qed. *)
   
 
-  Definition pattern_to_formula {typemap ctx quantifiermap} {t : deep_type }
+  Definition pattern_to_formula {typemap ctx quantifiermap} {t : type }
   (quantifiers: DeepList2 (ctx:=ctx) (typemap := typemap)quantifiermap) (f : Pattern (quantifiermap:=quantifiermap) (ctx:= ctx) t) : Formula (ctx:=ctx) t.
   induction f.
   -
@@ -4891,8 +4710,8 @@ forall {typemap quant_to_do t_quantifiermap}
     rett quant_to_do t_quantifiermap
     ql (app_pattern v p) (app_pattern v pnew).
     intros typemap quant_to_do t_quantifiermap. 
-    change ((fix app (l m : list (deep_type )) {struct l} :
-           list (deep_type ) :=
+    change ((fix app (l m : list (type )) {struct l} :
+           list (type ) :=
          match l with
          | nil => m
          | a :: l1 => a :: app l1 m
@@ -4991,9 +4810,9 @@ forall {typemap quant_to_do t_quantifiermap}
       {
         intros.
         (* This was surprisingly tricky the first time *)
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) p
                 = 
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) p) .
         clear H.
         {
           f_equal.
@@ -5010,9 +4829,9 @@ forall {typemap quant_to_do t_quantifiermap}
           dependent destruction y.
           reflexivity.
         }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) pnew
                 = 
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) pnew).
         {
           f_equal.
           remember (interp_formula ctx v).
@@ -5034,9 +4853,9 @@ forall {typemap quant_to_do t_quantifiermap}
       }
       {
         intros.
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) p
                 = 
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) p) .
         clear H.
         {
           f_equal.
@@ -5053,9 +4872,9 @@ forall {typemap quant_to_do t_quantifiermap}
           dependent destruction y.
           reflexivity.
         }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) pnew
                 = 
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) pnew).
         {
           f_equal.
           remember (interp_formula ctx v).
@@ -5166,7 +4985,7 @@ Definition saturate_1LtoR_aux : forall
   }
   Defined. *)
 
-Definition pattern_to_formula_correct {typemap ctx } {t : deep_type }
+Definition pattern_to_formula_correct {typemap ctx } {t : type }
   (quantifiers: DeepList2 (typemap := typemap)(ctx:=ctx) nil) (f : Pattern (quantifiermap:=nil) (ctx:= ctx) t)
    : 
    interp_pattern DNil f = interp_formula ctx (pattern_to_formula quantifiers f).
@@ -5365,8 +5184,8 @@ Definition saturate_L2R_correct : forall
   
 Definition lift_pattern :
   forall (tm tmext : list Type)
-    (t : deep_type)
-    (qm : list (deep_type ))
+    (t : type)
+    (qm : list (type ))
     (ctx : asgn tm)
     (* Maybe add a proof that every term of the context is within tm *)
     (pf : forallb (fun el => max_t (T el) <? length tm) ctx  = true)
@@ -5406,15 +5225,15 @@ Definition lift_pattern :
   Defined.
 
 Inductive reifed_obj {typemap : list Type} {ctx : asgn typemap} :=
-| SingleFact (a : deep_type) (f : Formula (typemap:=typemap) (ctx:=ctx) a)
-| EqualFacts (a : deep_type) 
+| SingleFact (a : type) (f : Formula (typemap:=typemap) (ctx:=ctx) a)
+| EqualFacts (a : type) 
   (l : Formula (typemap:=typemap) (ctx:=ctx) a)
   (r : Formula (typemap:=typemap) (ctx:=ctx) a)
   (th : Type)
   (th_pf : th)
 | Build_reifed_theorem  : forall
-  (deept : deep_type)
-  (quant : list deep_type)
+  (deept : type)
+  (quant : list type)
   (lhsP : @Pattern typemap quant ctx deept)
   (rhsP : @Pattern typemap quant ctx deept) 
   (th : Type)
@@ -5423,7 +5242,7 @@ Inductive reifed_obj {typemap : list Type} {ctx : asgn typemap} :=
 
 Definition lift_formula :
   forall (tm tmext : list Type)
-    (t : deep_type)
+    (t : type)
     (ctx : asgn tm)
     (* Maybe add a proof that every term of the context is within tm *)
     (pf : forallb (fun el => max_t (T el) <? length tm) ctx  = true)
@@ -5533,8 +5352,8 @@ Ltac reify_hyp1 H oldtypemap oldvarmap :=
   rename oldvarmap into oldvm;
   evar (oldtypemap : list Type);
   evar (oldvarmap : list (@SModule oldtypemap));
-  evar (deept : deep_type );
-  evar (nquant : list (deep_type ));
+  evar (deept : type );
+  evar (nquant : list (type ));
   evar (patternlhs : Pattern (quantifiermap:=nquant) (ctx:= oldvarmap) deept);
   evar (patternrhs : Pattern (quantifiermap:=nquant) (ctx:=oldvarmap) deept);
   let oldtm1 := eval unfold oldtm in oldtm in
@@ -5557,7 +5376,7 @@ Ltac reify_hyp1 H oldtypemap oldvarmap :=
   unify oldtm' typemap;
   pose typemap;
   idtac typemap;
-  let deepify_quant := ltac_map funToArrow typemap quan in
+  let deepify_quant := ltac_map funToTArrow typemap quan in
   let deepify_quant := type_term deepify_quant in
   let oldvm := eval unfold oldvm in oldvm in
   let x' := eval unfold nquant in nquant in
@@ -5565,7 +5384,7 @@ Ltac reify_hyp1 H oldtypemap oldvarmap :=
   idtac "deepquant" deepify_quant oldtm1 diff oldvm;
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' (prod a b) in
   idtac "newvarmap" varmap;
@@ -5585,7 +5404,7 @@ Ltac reify_hyp1 H oldtypemap oldvarmap :=
   let t := type of a in
   idtac "type of a" a t;
   let tm := eval unfold oldtypemap in oldtypemap in
-  let deeply_represented := funToArrow tm t in
+  let deeply_represented := funToTArrow tm t in
   let t' := eval unfold deept in deept in
   unify t' deeply_represented;
   unify x' reifedA ;
@@ -5635,10 +5454,10 @@ Ltac reify_prop1 typemap varmap prop :=
     let t := type of a in
     (* let typemap' := eval unfold typemap in typemap in *)
    (* let __ := match O with | _ => idtac "leaf" t a  typemap end in *)
-    let deeply_represented := funToArrow typemap t in
-   (* let __ := match O with | _ => idtac "funarrow" deeply_represented end in *)
+    let deeply_represented := funToTArrow typemap t in
+   (* let __ := match O with | _ => idtac "funTArrow" deeply_represented end in *)
     let deeply_represented := eval cbv in deeply_represented in
-    let newa :=  eval cbv  [Pos.to_nat app_nth1 Pos.of_nat sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in (upcast_value typemap deeply_represented nil eq_refl a) in
+    let newa :=  eval cbv  [Pos.to_nat app_nth1 Pos.of_nat sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value typemap deeply_represented nil eq_refl a) in
     (* let __ := match O with | _ => idtac "lookingfor" a varmap end in *)
     (* idtac deeply_represented a varmap; *)
     let idx := indexList {| T := deeply_represented ; state := newa : (t_denote (typemap:= typemap) deeply_represented)|} varmap in
@@ -5675,7 +5494,7 @@ Ltac reify_goal_equality oldtypemap oldvarmap :=
   let oldvm1 := eval unfold oldvm in oldvm in
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm1) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' (prod a b) in
   idtac "newvarmap" varmap;
@@ -5709,8 +5528,8 @@ Ltac reify_theorem_eq H oldtypemap oldvarmap list_th :=
   rename oldvarmap into oldvm;
   evar (oldtypemap : list Type);
   evar (oldvarmap : list (@SModule oldtypemap));
-  evar (edeept : deep_type );
-  evar (nquant : list (deep_type ));
+  evar (edeept : type );
+  evar (nquant : list (type ));
   evar (patternlhs : Pattern (quantifiermap:=nquant) (ctx:= oldvarmap) edeept);
   evar (patternrhs : Pattern (quantifiermap:=nquant) (ctx:=oldvarmap) edeept);
   let oldtm1 := eval unfold oldtm in oldtm in
@@ -5733,7 +5552,7 @@ Ltac reify_theorem_eq H oldtypemap oldvarmap list_th :=
   unify oldtm' typemap;
   pose typemap;
   idtac typemap;
-  let deepify_quant := ltac_map funToArrow typemap quan in
+  let deepify_quant := ltac_map funToTArrow typemap quan in
   let deepify_quant := type_term deepify_quant in
   let oldvm := eval unfold oldvm in oldvm in
   let x' := eval unfold nquant in nquant in
@@ -5741,7 +5560,7 @@ Ltac reify_theorem_eq H oldtypemap oldvarmap list_th :=
   idtac "deepquant" deepify_quant oldtm1 diff oldvm;
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv [ sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv [ sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' (prod a b) in
   idtac "newvarmap" varmap;
@@ -5761,7 +5580,7 @@ Ltac reify_theorem_eq H oldtypemap oldvarmap list_th :=
   let t := type of a in
   idtac "type of a" a t;
   let tm := eval unfold oldtypemap in oldtypemap in
-  let deeply_represented := funToArrow tm t in
+  let deeply_represented := funToTArrow tm t in
   let t' := eval unfold edeept in edeept in
   unify t' deeply_represented;
   unify x' reifedA ;
@@ -5804,7 +5623,7 @@ idtac "start listTypes" a b;
   let oldvm1 := eval unfold oldvm in oldvm in
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm1) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' (prod a b)  in
   idtac "newvarmap" varmap ;
@@ -5845,7 +5664,7 @@ idtac "start listTypes" a b;
   let oldvm1 := eval unfold oldvm in oldvm in
   let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm1) in
   idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect deep_type_rect deep_type_rec] in oldvarmap' in
+  let oldvarmap' := eval cbv [sndP app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
   idtac "reduced" oldvarmap';
   let varmap := listFromProp' typemap oldvarmap' a  in
   idtac "newvarmap" varmap ;
@@ -6269,3 +6088,151 @@ Goal (forall m n o, (forall x n ,  x + n = n + x) -> (forall x y z ,  (x + y) + 
   Time pose (@saturate_L2R_correct _ vm quantifiers0 _ p p0 _ i3 H).
   Time prove_eq goalLHS goalRHS i4.
 Time Qed. 
+
+(* CHENIL BROUGHT DOWN *)
+  Inductive SModule {typemap : list Type} :=
+    { T : type ; state : t_denote (typemap := typemap) T }.
+
+  Definition generic_embed {typemap : list Type} (T': type ) (s:t_denote (typemap := typemap)T') :=
+    {| T:= T'; state := s |}.
+
+Notation "'<<' s '>>'" := (generic_embed s) (only parsing).
+
+Ltac inList e l :=
+  lazymatch l with
+  | nil =>
+  false
+  | cons ?t ?l =>
+    let res := match O with
+    | _ =>
+    CASE ltac:(
+      first [constr_eq e t ]
+      ) true
+    | _ =>
+    inList e l
+    end in res
+  end.
+
+Ltac indexList e l :=
+  match l with
+  | nil => constr:(false)
+  | cons e _ => constr:(O%nat)
+  | cons _ ?l =>
+    let n := indexList e l in
+    constr:((S n)%nat)
+  end.
+
+Ltac addList e l :=
+  let member := inList e l in
+ (* let __ := match O with | _ => idtac "addlist" e l member end in *)
+  match member with
+  | true => l
+  | false =>
+  let newl := eval cbv [app] in (app l (cons e nil)) in
+ (* let __ := match O with | _ => idtac "appendlist" end in *)
+   newl
+  end.
+Definition index := nat.
+Ltac CASE l ret :=
+let __ := match O with
+| _ => assert_succeeds l
+end in ret.
+
+
+Ltac funToTArrow tmap t :=
+  match t with
+  | ?a -> ?b =>
+    let s1 := funToTArrow tmap a in
+    let s2 := funToTArrow tmap b in
+    constr:(s1 ~> s2)
+  | _ =>
+    let dt := indexList t tmap in
+     constr:(TBase dt)
+  end.
+
+(* Le probleme c'set qu'il faut rajouter les TBase types aussi *)
+Ltac listTypesFromProp acc input_prop :=
+ (* let __ := match O with | _ => idtac "listnewitem" acc input_prop end in *)
+  match input_prop with
+  | ?a ?b  =>
+    lazymatch type of b with 
+    | Prop => 
+    let acc' := listTypesFromProp acc a in
+ (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
+    let acc'' := listTypesFromProp acc' b in
+    let t := type of input_prop in
+    match t with 
+    | _ -> _ => 
+      acc''
+    | _ =>
+     addList (t:Type) acc''
+     end
+        | Type => fail
+        | _ => 
+    let acc' := listTypesFromProp acc a in
+ (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
+    let acc'' := listTypesFromProp acc' b in
+ (* let __ := match O with | _ => idtac "listnew2" acc'' end in *)
+    let t := type of input_prop in
+    match t with 
+    | _ -> _ => 
+      acc''
+    | _ =>
+     addList (t:Type) acc''
+     end
+    end
+  | ?a =>
+    let t := type of a in
+    match t with 
+    | _ -> _ => 
+      acc 
+    | _ =>
+    addList (t : Type) acc
+    end
+  end.
+
+
+Ltac listFromProp tmap acc input_prop :=
+  match input_prop with
+  | ?a ?b  =>
+     lazymatch type of b with 
+     |Prop => 
+  let acc := listFromProp tmap acc a in
+    let acc := listFromProp tmap acc b in
+    acc
+        | Type => fail
+        | _ => 
+    let acc := listFromProp tmap acc a in
+    let acc := listFromProp tmap acc b in
+    acc
+        end
+  | ?a =>
+    let t := type of a in
+    let deeply_represented := funToTArrow tmap t in
+    addList {| T := deeply_represented ; state := a : (t_denote (typemap:= tmap) deeply_represented)|} acc
+  end.
+
+
+Goal forall A C (D:Prop),
+  A /\ A \/ C -> False.
+  intros.
+  let t := type of H in
+  let tmap := listTypesFromProp (nil : list Type) t in
+  let map := listFromProp tmap (nil : list (SModule (typemap := tmap))) t in
+  idtac tmap;
+  idtac map.
+  Abort.
+
+Section Term.
+  Context {typemap : list Type}.
+  Inductive Formula {ctx: asgn typemap} : type -> Type :=
+      | App1: forall {t td},
+        Formula (t ~> td) ->
+        Formula t ->
+        Formula td
+      | Atom1 : forall (n : positive) t0,
+        EGraphList.nth_error ctx ((Pos.to_nat n) - 1) = Some t0 ->
+        Formula (T t0).
+
+
+Require Import Eqdep.

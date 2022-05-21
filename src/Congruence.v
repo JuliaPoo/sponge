@@ -10,17 +10,11 @@ Ltac CASE l ret :=
 let __ := match O with
 | _ => assert_succeeds l
 end in ret.
-Require EGraphList.
+
+Require Sponge.EGraphList.
 Module NonSamsam.
 Import EGraphList.
-(* Reimport coq list *)
-(* Ltac inList e l :=
-  match l with
-  | nil => false
-  | cons e _ => true
-  | cons _ ?l => inList e l
-  end. *)
-  (* New inList ltac, fancier, kicks in reflexivity*)
+
 Ltac inList e l :=
   lazymatch l with
   | nil =>

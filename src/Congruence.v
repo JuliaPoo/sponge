@@ -540,7 +540,7 @@ Section egraphs.
   Definition union (g : uf_t) (x y : eclass_id ) : uf_t :=
     let px := find g x in
     let py := find g y in
-    PTree.set y px (PTree.map_filter (fun el => if Pos.eq_dec el py then Some px else Some el) g).
+    PTree.set x py (PTree.map_filter (fun el => if Pos.eq_dec el px then Some py else Some el) g).
 
   Inductive enode : Type :=
     | EApp: eclass_id -> eclass_id -> enode
@@ -596,7 +596,6 @@ Section egraphs.
       PTree.t (PTree.t (eclass_id * eclass_id)) 
       (* Similarly here we keep the pair of eclass_id, to represent the set of enodes of the form EApp1 idx_body idx_arg *)
       )%type.
-
 
   Definition add_enode_set (m : set_enodes) (n : enode) :=
       let '(atms, fs) := m in
@@ -691,17 +690,21 @@ Section egraphs.
       merge_n2id e1 e2 (n2id e);
     id2s := merge_id2s e1 e2 (id2s e) |}.
 
-  Fixpoint lookupF {t} (f : Formula t) (e : egraph) : option (eclass_id) :=
+  Fixpoint lookup_term {t} (f : term t) (e : egraph) : option (eclass_id) :=
+    (* Only for closed terms (don't have variables),
+       always return the canonical class id *)
     match f with
-    | App1 e1 e2 =>
-      match lookupF e1 e, lookupF e2 e with
+    | TApp e1 e2 =>
+      match lookup_term e1 e, lookup_term e2 e with
       | Some e1, Some e2 =>
-        let fnode := EApp1 e1 e2 in
+        let fnode := EApp e1 e2 in
         lookup e fnode
       | _, _ => None
       end
-    | Atom1 n t eq =>
-      lookup e (EAtom1 n)
+    | TConst n t =>
+      lookup e (EConst n)
+    | TVar _ _ => 
+      None
     end.
 
   Definition empty_egraph := {|
@@ -711,39 +714,45 @@ Section egraphs.
     id2s := PTree.empty _
     |}.
 
-  Fixpoint add_formula (e : egraph) {t}
-    (f : Formula t)
+  Fixpoint add_term (e : egraph) {t}
+    (f : term t)
     : (egraph * eclass_id) :=
       match f with
-      | App1 f1 f2 =>
-        let '(e, fid) := add_formula e f1 in
-        let '(e, arg1id) := add_formula e f2 in
-        match lookup e (EApp1 fid arg1id) with
+      | TVar _ _ => (e, 1) (* Error the term is supposed to be closed *)
+      | TApp f1 f2 =>
+        let '(e, fid) := add_term e f1 in
+        let '(e, arg1id) := add_term e f2 in
+        match lookup e (EApp fid arg1id) with
         | Some a => (e, a)
         | None =>
-        let idx_formula := max_allocated e in
+        let eid_newterm := max_allocated e in
         ({|
-        max_allocated := max_allocated e + 1;
+        max_allocated := eid_newterm + 1;
         uf := uf e;
-        n2id := add_enode (n2id e) (canonicalize e (EApp1 fid arg1id)) idx_formula;
-        id2s := PTree.set idx_formula (idx_formula, t, (add_enode_set (PTree.empty _, PTree.empty _)  (canonicalize e (EApp1 fid arg1id)))) (id2s e)|}, idx_formula)
+        (* The following canonicalize is unecessary but helps in the proof *)
+        n2id := add_enode (n2id e) (canonicalize e (EApp fid arg1id)) eid_newterm;
+        id2s := PTree.set eid_newterm (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _)  
+        (canonicalize e (EApp fid arg1id)))) (id2s e)|}, eid_newterm)
         end
-      | Atom1 n _t e0 =>
-         match lookupF f e with
+      | TConst n _t =>
+         match lookup_term f e with
         | Some a => (e, a)
         | None =>
-        let idx_formula := max_allocated e in
+        let eid_newterm := max_allocated e in
         ({|
-        max_allocated := max_allocated e + 1;
+        max_allocated := eid_newterm + 1;
         uf := uf e;
-        n2id := add_enode (n2id e) (EAtom1 n) idx_formula;
-        id2s := PTree.set idx_formula (idx_formula, t, (add_enode_set (PTree.empty _, PTree.empty _) (EAtom1 n))) (id2s e)|}, idx_formula)
+        n2id := add_enode (n2id e) (EConst n) eid_newterm;
+        id2s := PTree.set eid_newterm 
+                          (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _) (EConst n)))
+                          (id2s e)|}, eid_newterm)
         end
       end.
 
-  Definition mergeF {t} (e : egraph) (f : Formula t) (g : Formula t) : egraph * eclass_id * eclass_id :=
-    let '(newe, fid) := add_formula e f in
-    let '(newe', gid) := add_formula newe g in
+  Definition merge_terms {t} (e : egraph) (f : term t) (g : term t) : egraph * eclass_id * eclass_id :=
+    (* One of the two returned eid become non-canonical and should not be returned *)
+    let '(newe, fid) := add_term e f in
+    let '(newe', gid) := add_term newe g in
     (merge newe' fid gid, fid, gid).
 
   Definition classIsCanonical e (n : eclass_id) :=

@@ -133,6 +133,96 @@ Inductive term : type -> Type :=
     | TConst : forall (n : positive) (t: type),
       term t.
 
+Fixpoint term_eqb {t1 t2} (f1 : term t1) (f2 : term t2) : bool :=
+  match f1, f2 with
+  | TApp a b, TApp a' b' =>
+    andb (term_eqb a a') (term_eqb b b')
+  | TConst n t, TConst n' t' =>
+  (* TODO maybe call type_eqb *)
+    match type_eq_dec t t' with
+    | left _ =>
+      Pos.eqb n n'
+    | right _ => false
+    end
+| TVar n t, TVar n' t' =>
+  (* TODO maybe call type_eqb *)
+    match type_eq_dec t t' with
+    | left _ =>
+      Pos.eqb n n'
+    | right _ => false
+    end
+  | _, _ => false
+  end. 
+
+Lemma term_eqb_same_type : forall {t1} (f1 : term t1) {t2} (f2 : term t2),
+  term_eqb f1 f2 = true -> t1 = t2.
+  induction f1.
+  2:{
+    intros; eauto.
+    cbn in H.
+    destruct f2 eqn:?; try inversion H; clear H.
+    destruct (type_eq_dec) ; eauto.
+    inversion H1.
+  }
+  {
+    cbn.
+    intros.
+    destruct f2 eqn:?; try inversion H; clear H.
+    eapply andb_prop in H1.
+    destruct H1.
+    specialize (IHf1_1 _ _ H).
+    inversion IHf1_1.
+    eauto.
+  }
+  {
+    intros; eauto.
+    cbn in H.
+    destruct f2 eqn:?; try inversion H; clear H.
+    destruct (type_eq_dec) ; eauto.
+    inversion H1.
+  }
+  Qed.
+
+Lemma term_eqb_eq : forall {t} (f1 : term t) (f2 : term t),
+  term_eqb f1 f2 = true -> f1 = f2.
+  induction f1.
+  2:{
+    intros; eauto.
+    cbn in H.
+    destruct f2 eqn:?; try inversion H; clear H.
+    destruct (type_eq_dec) ; eauto.
+    + eapply Pos.eqb_eq in H1.
+      congruence.
+    +
+      discriminate. 
+  }
+  {
+    cbn.
+    intros.
+    destruct f2 eqn:?; try inversion H; clear H.
+    eapply andb_prop in H1.
+    destruct H1.
+    pose (term_eqb_same_type _ _ H).
+    inversion e. 
+    subst.
+    specialize (IHf1_1 _  H).
+    subst.
+    specialize (IHf1_2 _  H0).
+    subst.
+    eauto.
+  }
+  {
+    intros; eauto.
+    cbn in H.
+    destruct f2 eqn:?; try inversion H; clear H.
+    destruct (type_eq_dec) ; eauto.
+    + eapply Pos.eqb_eq in H1.
+      congruence.
+    +
+      discriminate. 
+  }
+  Qed.
+
 Inductive dyn {typemap : list Type} :=
   mk_dyn { dyn_type : type ; 
     dyn_val : t_denote typemap dyn_type }.
@@ -434,360 +524,131 @@ Goal forall (l : Coq.Init.Datatypes.list nat),
   let rH := reify_expr tmap map (@EGraphList.nil (dyn tmap)) tH in 
   pose rH.
   Abort.
-End Temp.
 
-Require Coq.Lists.List. Import List.ListNotations.
-Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
-Require Import Coq.micromega.Lia.
-Require Import Coq.Logic.PropExtensionality.
-
-Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
-Module PropLemmas.
-  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
-  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
-  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
-  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
-End PropLemmas.
-
-
-Section WithLib.
-  Context (word: Type)
-          (ZToWord: Z -> word)
-          (unsigned: word -> Z)
-          (wsub: word -> word -> word)
-          (wadd: word -> word -> word)
-          (wopp: word -> word).
-
-  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
-          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-          (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
-
-  (* Preprocessing: *)
-  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
-
-  (* With sideconditions: *)
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
-
-  Context (mem: Type)
-          (word_array: word -> list word -> mem -> Prop)
-          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
-
-  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
-
-  Ltac pose_list_lemmas :=
-    pose proof (@List.firstn_cons word) as firstn_cons;
-    pose proof (@List.skipn_cons word) as skipn_cons;
-    pose proof (@List.app_comm_cons word) as app_cons;
-    pose proof (@List.firstn_O word) as firstn_O;
-    pose proof (@List.skipn_O word) as skipn_O;
-    pose proof (@List.app_nil_l word) as app_nil_l;
-    pose proof (@List.app_nil_r word) as app_nil_r.
-
-  Ltac pose_prop_lemmas :=
-    pose proof PropLemmas.and_True_l as and_True_l;
-    pose proof PropLemmas.and_True_r as and_True_r;
-    pose proof PropLemmas.eq_eq_True as eq_eq_True.
-
-  Definition lipstick {A:Type} {a:A} := a.
-
-  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
-                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
-        (f g: word -> word) (b: word)
-        (HL: length vs = 3%nat)
-        (H : sep (word_array a
-          (List.firstn
-             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs) ++
-           [w2] ++
-           List.skipn
-             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs))) R m),
-      f (wadd b a) = g b /\
-      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
-      f (wadd b a) = f (wadd a b).
-  Proof.
-    intros.
-
-    pose_list_lemmas.
-    pose_prop_lemmas.
-
-    intros.
-    specialize (eq_eq_True word).
-
-    (* Make problems simpler by only considering one combination of the booleans,
-       but it would be nice to treat all of them at once *)
-    replace cond0_0 with false in * by admit.
-    replace cond0 with false in * by admit.
-
-    (* Make problem simpler by not requiring side conditions: since we know the
-       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
-       be on cons without sideconditions rather than on app with side conditions
-       on length *)
-    destruct vs as [|v0 vs]. 1: discriminate HL.
-    destruct vs as [|v1 vs]. 1: discriminate HL.
-    destruct vs as [|v2 vs]. 1: discriminate HL.
-    destruct vs as [|v3 vs]. 2: discriminate HL.
-    clear HL.
-    cbn.
-    (* cbn in H. <-- We don't do this cbn because now that we've done the above
-       destructs, cbn can do much more than it usually would be able to do. *)
-
-    (* Preprocessing *)
-    rewrite wsub_def in *.
-    clear wsub_def.
-    apply PropLemmas.eq_True in H.
-
-    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
-    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
-
-    (* Constant propagation rules, manually chosen to make things work,
-       TODO how to automate? *)
-    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
-
-  Ltac reify_interp_roundtrip h := 
-   let t := type of h in
-   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
-   let tname := fresh "tm" in
-   pose tmap as tname;
-   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
-   (* idtac "tmap" tmap "constmap" cmap; *)
-   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
-   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl ).
-
-  Time reify_interp_roundtrip H.
-  let tH := type of H in 
-  assert (t = tH) .
-  + Time reflexivity.
-  { subst t.  
-  Compute (type_eq_dec (`1~>`2) (`1 ~> `2)).
-
-  Print type_eq_dec.
-  subst t. Time reflexivity. }
-
-  vm in t.
-
-Require Import Arith.
 Require Import Enodes.
 Require Import Lia.
 Section egraphs.
-
   Context {typemap : list Type}.
-  Context {ctx : asgn typemap}.
+  Context {constmap : list (dyn typemap)}.
 
+  Definition eclass_id := positive.
+  Definition idx_constmap := positive.
   Definition uf_t := PTree.t eclass_id.
-  (*  eclass_id -> eclass_id *)
 
   Definition init_uf : uf_t := PTree.empty _.
   Definition find (uf : uf_t) (x : eclass_id) := match PTree.get x uf with | Some y => y | None => x end.
-
-  Lemma nat_eq_refl : forall x, exists p, Nat.eq_dec x x = left p.
-    intros x.
-    destruct (Nat.eq_dec x x).
-    eexists. reflexivity.
-    unfold "<>" in n. exfalso. apply n. reflexivity.
-  Qed.
-
-
-  Definition dt_eq_correct : forall (t1 t2 : type ),
-    dt_eq t1 t2 = true -> t1 = t2.
-    induction t1.
-    - cbn.
-      destruct t2.
-      rewrite Nat.eqb_eq.
-      intros; eauto.
-      intros; inversion H.
-    -
-        cbn.
-        intros.
-        destruct t2;
-        try inversion H; clear H.
-        cbn in *.
-        eapply Bool.andb_true_iff in H1.
-        destruct H1.
-        specialize IHt1_1 with (1:= H).
-        specialize IHt1_2 with (1:= H0).
-        rewrite IHt1_1.
-        rewrite IHt1_2.
-        eauto.
-  Qed.
-
-
-
-  Lemma dteq_refl : forall t,
-  dt_eq t t = true .
-  induction t.
-  cbn.
-  eapply Nat.eqb_refl.
-  cbn.
-  rewrite IHt1, IHt2.
-  cbn; eauto.
-  Qed.
-
-  Lemma dteq_refl' : forall t ,
-  exists p, dt_eq' t t = left p.
-  induction t.
-  cbn.
-  destruct (Nat.eq_dec t t).
-  destruct e.
-  eexists.
-  eauto.
-  contradiction n.
-  reflexivity.
-  destruct IHt1.
-  destruct IHt2.
-  destruct x.
-  destruct x0.
-  cbn.
-  eexists.
-  rewrite H0.
-  rewrite H.
-  cbv.
-  cbn; eauto.
-  Qed.
-
   Definition union (g : uf_t) (x y : eclass_id ) : uf_t :=
     let px := find g x in
     let py := find g y in
     PTree.set y px (PTree.map_filter (fun el => if Pos.eq_dec el py then Some px else Some el) g).
 
-  Notation Formula x := (Formula (ctx := ctx) (typemap := typemap) x).
+  Inductive enode : Type :=
+    | EApp: eclass_id -> eclass_id -> enode
+    | EConst: forall (n: idx_constmap), enode.
 
-  Fixpoint eqf {t1 t2} (f1 : Formula t1) (f2 : Formula t2) :=
-  match f1, f2 with
-  | App1 a b, App1 a' b' =>
-    eqf a a' && eqf b b'
-  | @Atom1 _ _ n tn eq, @Atom1 _ _ n' tn' eq' =>
-  match dt_eq' (T tn) (T tn') with
-  | left _ =>
-    Pos.eqb n n'
-  | right _ => false
-  end
-  | _, _ => false
-  end.
+  Definition map_enode_to_eid :=
+      (PTree.t (enode * eclass_id) *
+      (* Map EConst to eclass_id, the returned enode is the key *)
+      (PTree.t (PTree.t (enode * eclass_id))) 
+      (* Map EApp to eclass_idm the returned enode is the key *)
+      )%type.
 
-  Lemma eqf_refl : forall {t} (f : Formula t), eqf f f = true.
-    induction f.
-    - cbn.
-      rewrite IHf1, IHf2.
-      eauto.
-    - cbn.
-      pose proof (@dteq_refl' (T t0)).
-      destruct H.
-      rewrite H.
-      rewrite Pos.eqb_eq.
-      eauto.
-  Qed.
+  Definition lookup' (m : map_enode_to_eid) (n : enode) : option (enode * eclass_id) :=
+    let '(atms, fs) := m in
+    match n with 
+    | EApp f arg =>
+        match PTree.get f fs with 
+        | Some snd_level_map => PTree.get arg snd_level_map
+        | None => None
+        end 
+    | EConst idx => PTree.get idx atms
+    end.
 
-  Lemma eq_preserve_type : forall {t1} (f1 : Formula t1) {t2} (f2 : Formula  t2),
-  eqf f1 f2 = true -> t1 = t2.
-  induction f1.
-  2:{
-    intros; eauto.
-    cbn in H.
-    destruct f2 eqn:?; try inversion H; clear H.
-    destruct (dt_eq' (T t0) (T t1)); eauto.
-    inversion H1.
-  }
-  {
-    cbn.
-    intros.
-    destruct f2 eqn:?; try inversion H; clear H.
-    eapply andb_prop in H1.
-    destruct H1.
-    specialize (IHf1_1 _ _ H).
-    inversion IHf1_1.
-    eauto.
-  }
-  Defined.
+  Definition lookup_non_canonical (m : map_enode_to_eid) (n : enode) : option eclass_id:=
+     match lookup' m n with 
+    | Some res => Some (snd res)
+    | None => None
+     end.
+
+  Definition add_enode (m : map_enode_to_eid) (n : enode) (e : eclass_id) : map_enode_to_eid :=
+    match lookup_non_canonical m n with 
+    | Some _ => m 
+    | None => 
+      let '(atms, fs) := m in
+      match n with 
+      | EApp f arg =>
+          let args := match PTree.get f fs with 
+              | Some snd_level_map => snd_level_map
+              | None => PTree.empty _
+               end 
+          in
+          let newargs := PTree.set arg (n,e) args in
+          (atms, PTree.set f newargs fs)
+      | EConst idx => (PTree.set idx (n,e) atms, fs)
+      end
+    end.
 
 
-  Ltac inverseS e0 :=
-    let name := fresh e0 in
-    inversion e0 as [name];
-    cbn in name;
-    apply inj_pair2 in name; clear e0;
-    rename name into e0.
+  Definition set_enodes :=
+      (* Set of EAtoms idx_varmap and Set of EApp1 eclass_id eclass_id *)
+      (PTree.t idx_constmap * 
+      (* We keep the eclass_id instead of tt. This is because we don't have map_with_keys, so we keep the key int he value *)
+      PTree.t (PTree.t (eclass_id * eclass_id)) 
+      (* Similarly here we keep the pair of eclass_id, to represent the set of enodes of the form EApp1 idx_body idx_arg *)
+      )%type.
 
-  Lemma eq_correct : forall {t} (f1 f2 : Formula t),
-    eqf f1 f2 = true -> interp_formula ctx f1 = interp_formula ctx f2.
-    induction f1.
-    2:{
-        cbn.
-        intros.
-        destruct t0.
-        simpl in *.
-        destruct f2; try inversion H; clear H.
-        destruct (dt_eq' (T t0) (T t0)); inversion H1; clear H1.
-        Search ((_ =? _)%positive = true).
-        eapply Peqb_true_eq in H0.
-        cbn.
-        subst.
-        destruct t0.
-        cbn in *.
-        rewrite e in e0.
-        inverseS e0.
-        eauto.
-    }
-    {
-      intros; eauto.
-      destruct f2; try inversion H; clear H.
-      eapply andb_prop in H1.
-      destruct H1.
-      pose proof H.
-      pose proof H0.
-      eapply eq_preserve_type in H.
-      eapply eq_preserve_type in H0.
-      subst.
-      specialize (IHf1_2 _ H2).
-      specialize (IHf1_1 _ H1).
-      simpl.
-      rewrite IHf1_1.
-      rewrite IHf1_2.
-      reflexivity.
-    }
-  Defined.
 
-  (* Definition set_enodes := PTree.t unit. *)
-  Definition map_id_enode :=
+  Definition add_enode_set (m : set_enodes) (n : enode) :=
+      let '(atms, fs) := m in
+      match n with 
+      | EApp f arg =>
+          let args := match PTree.get f fs with 
+              | Some snd_level_map => snd_level_map
+              | None => PTree.empty _
+               end 
+          in
+          let newargs := PTree.set arg (f,arg) args in
+          (atms, PTree.set f newargs fs)
+      | EConst idx => (PTree.set idx idx atms, fs)
+    end.
+
+  Definition map_eid_to_set_of_enode :=
+    (* Set of enodes of each eclass_id *)
     PTree.t (eclass_id * type * set_enodes).
 
   Record egraph := {
     max_allocated : positive;
-    uf : uf_t; 
     (* eclass_id -> eclass_id *)
-    n2id : map_enode_id;
+    uf : uf_t; 
     (* enode -> eclass_id *)
-    (*  enode := EAtom (ptr vers la liste) | EApp eclass_id eclass_id *)
-    id2s : map_id_enode
+    n2id : map_enode_to_eid;
     (* eclass_id -> Set enode *)
+    id2s : map_eid_to_set_of_enode
   }.
 
   Definition canonicalize (e : egraph) (node : enode) : enode
   :=
     match node with
-    | EApp1 f a =>
+    | EApp f a =>
       let f := find (uf e) f in
       let a := find (uf e) a in
-      EApp1 f a
+      EApp f a
     | a => a
-    (* | EAtom1 n => let can := lookup (n2id e) (EAtom1 n) in *)
     end.
 
   Definition lookup (e : egraph) (node : enode) : option eclass_id :=
-    match lookup (n2id e) (canonicalize e node) with 
+    match lookup_non_canonical (n2id e) (canonicalize e node) with 
     | Some to_canon => Some (find (uf e) to_canon)
-    | None => None 
+    | None => None
     end.
 
   (* Invariant, we always merge stuff that are already present in the egraph *)
-  Definition merge_id2s (e1 e2 : eclass_id) (m : map_id_enode) : map_id_enode :=
+  (* So we don't consider the case where one of the two eclass has an empty set. *)
+  Definition merge_id2s (e1 e2 : eclass_id) (m : map_eid_to_set_of_enode) : map_eid_to_set_of_enode :=
+    (* e2 is the new canonical representant *)
     match (PTree.get e1 m), (PTree.get e2 m) with 
     | Some (eid1, tl, (set_eatoms_l, set_eapp_l)), Some (eid2, tr, (set_eatoms_r, set_eapp_r)) =>
-      if dt_eq' tl tr then
+      if type_eq_dec tl tr then
         let newatoms :=
           PTree.merge_l set_eatoms_l set_eatoms_r in
         let newapps :=
@@ -795,38 +656,26 @@ Section egraphs.
         PTree.set e2 (eid2, tl, (newatoms, newapps)) m
       else
         m
-    (* Following case should never occur, we would leave the map unchanged
-    TODO think about how I could define it? *)
     | _, _  => m
     end.
 
-  Definition merge_n2id (e1 e2 : eclass_id) (m:map_enode_id) : map_enode_id :=
+  Definition merge_n2id (e1 e2 : eclass_id) (m : map_enode_to_eid ) : map_enode_to_eid :=
     let '(atms, fs) := m in 
-    (* let atms_gather_to_change := 
-      PTree.map_filter (fun '(enode,e) => if Pos.eq_dec e e1 then Some enode else None) atms
-    in
-    let atms := PTree.tree_fold_preorder (fun acc val  =>  
-                match val with 
-                | EAtom1 enode => 
-                    PTree.set enode (EAtom1 enode, e2) acc
-                | _ => acc
-                end) atms_gather_to_change atms 
-    (* let atms := PTree.tree_rec atms (fun _lhs acc1 val _rhs acc2 =>  
-                match val with 
-                | Some (EAtom1 enode) => 
-                    PTree.merge_l (PTree.set enode (EAtom1 enode, e2) acc1) acc2 
-                | _ => PTree.merge_l acc1 acc2 
-                end) atms_gather_to_change *)
-    in *)
+    (* EApp e1 e3 -> e143
+    Add 
+       EApp e2 e3 -> e143
+    No need to modify
+       EConst n -> e1 
+    *)
     let eapp_gather_to_change := PTree.tree_fold_preorder (fun acc val  =>  
     PTree.tree_fold_preorder (fun acci '(enode,eid) =>
                                     match enode with
-                                    | EApp1 a b => 
+                                    | EApp a b => 
                                       let one_e1 := orb (Pos.eqb a e1) (Pos.eqb b e1) in
                                       if one_e1 then 
                                       let newa := if Pos.eqb a e1 then e2 else a in 
                                       let newb := if Pos.eqb b e1 then e2 else a in 
-                                      (EApp1 newa newb, eid)::acc
+                                      (EApp newa newb, eid)::acc
                                       else acc
                                     | _ => acc 
                                     end) val acc) fs nil in
@@ -6469,3 +6318,137 @@ Section Term.
 
 
 Require Import Eqdep.
+
+Require Coq.Lists.List. Import List.ListNotations.
+Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
+Require Import Coq.micromega.Lia.
+Require Import Coq.Logic.PropExtensionality.
+
+Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
+Module PropLemmas.
+  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
+  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
+  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
+  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
+End PropLemmas.
+
+
+Section WithLib.
+  Context (word: Type)
+          (ZToWord: Z -> word)
+          (unsigned: word -> Z)
+          (wsub: word -> word -> word)
+          (wadd: word -> word -> word)
+          (wopp: word -> word).
+
+  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
+          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
+          (wadd_comm: forall a b, wadd a b = wadd b a)
+          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
+
+  (* Preprocessing: *)
+  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
+
+  (* With sideconditions: *)
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+
+  Context (mem: Type)
+          (word_array: word -> list word -> mem -> Prop)
+          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
+
+  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
+
+  Ltac pose_list_lemmas :=
+    pose proof (@List.firstn_cons word) as firstn_cons;
+    pose proof (@List.skipn_cons word) as skipn_cons;
+    pose proof (@List.app_comm_cons word) as app_cons;
+    pose proof (@List.firstn_O word) as firstn_O;
+    pose proof (@List.skipn_O word) as skipn_O;
+    pose proof (@List.app_nil_l word) as app_nil_l;
+    pose proof (@List.app_nil_r word) as app_nil_r.
+
+  Ltac pose_prop_lemmas :=
+    pose proof PropLemmas.and_True_l as and_True_l;
+    pose proof PropLemmas.and_True_r as and_True_r;
+    pose proof PropLemmas.eq_eq_True as eq_eq_True.
+
+  Definition lipstick {A:Type} {a:A} := a.
+
+  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
+                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
+        (f g: word -> word) (b: word)
+        (HL: length vs = 3%nat)
+        (H : sep (word_array a
+          (List.firstn
+             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs) ++
+           [w2] ++
+           List.skipn
+             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs))) R m),
+      f (wadd b a) = g b /\
+      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
+      f (wadd b a) = f (wadd a b).
+  Proof.
+    intros.
+
+    pose_list_lemmas.
+    pose_prop_lemmas.
+
+    intros.
+    specialize (eq_eq_True word).
+
+    (* Make problems simpler by only considering one combination of the booleans,
+       but it would be nice to treat all of them at once *)
+    replace cond0_0 with false in * by admit.
+    replace cond0 with false in * by admit.
+
+    (* Make problem simpler by not requiring side conditions: since we know the
+       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
+       be on cons without sideconditions rather than on app with side conditions
+       on length *)
+    destruct vs as [|v0 vs]. 1: discriminate HL.
+    destruct vs as [|v1 vs]. 1: discriminate HL.
+    destruct vs as [|v2 vs]. 1: discriminate HL.
+    destruct vs as [|v3 vs]. 2: discriminate HL.
+    clear HL.
+    cbn.
+    (* cbn in H. <-- We don't do this cbn because now that we've done the above
+       destructs, cbn can do much more than it usually would be able to do. *)
+
+    (* Preprocessing *)
+    rewrite wsub_def in *.
+    clear wsub_def.
+    apply PropLemmas.eq_True in H.
+
+    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
+    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
+
+    (* Constant propagation rules, manually chosen to make things work,
+       TODO how to automate? *)
+    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
+
+  Ltac reify_interp_roundtrip h := 
+   let t := type of h in
+   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
+   let tname := fresh "tm" in
+   pose tmap as tname;
+   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
+   (* idtac "tmap" tmap "constmap" cmap; *)
+   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
+   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl).
+
+  Time reify_interp_roundtrip H.
+  let tH := type of H in 
+  assert (t = tH) .
+  + Time reflexivity.
+  { subst t.  
+  Compute (type_eq_dec (`1~>`2) (`1 ~> `2)).
+
+  Print type_eq_dec.
+  subst t. Time reflexivity. }
+
+  vm in t.

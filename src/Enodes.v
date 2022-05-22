@@ -4,18 +4,7 @@ Unset Universe Minimization ToSet.
 From Coq Require Import PArith FunctionalExtensionality.
 
 (* For now using nat but I should be able to switch for N *)
-Definition eclass_id := positive.
-Definition idx_varmap := positive.
 
-Inductive enode : Type :=
-  | EApp1:
-  eclass_id ->
-  eclass_id ->
-  enode
-  | EAtom1 : forall 
-  (* (ptr_varmap : nat) *)
-   (n: idx_varmap),
-  enode.
 
 (* Directly pasted from Leroy and Appel : *)
 
@@ -844,73 +833,6 @@ Module PTree.
               | None, None => None
               end) m1 m2.
 End PTree.
-
-Definition map_enode_id :=
-  (* Invariant, an eclass is either on the lhs or on the rhs, but never on both *)
-    (PTree.t (enode * eclass_id) * (PTree.t (PTree.t (enode * eclass_id))) 
-    )%type.
-
-Definition lookup' (m : map_enode_id) (n : enode) :=
-    let '(atms, fs) := m in
-    match n with 
-    | EApp1 f arg =>
-        match PTree.get f fs with 
-        | Some snd_level_map => PTree.get arg snd_level_map
-        | None => None
-        end 
-    | EAtom1 idx => PTree.get idx atms
-    end.
-
-Definition lookup (m : map_enode_id) (n : enode) :=
-     match lookup' m n with 
-    | Some res => Some (snd res)
-    | None => None
-     end.
-
-Definition add_enode (m : map_enode_id) (n : enode) (e : eclass_id) :=
-    match lookup m n with 
-    | Some _ => m 
-    | None => 
-    let '(atms, fs) := m in
-    match n with 
-    | EApp1 f arg =>
-        let args := match PTree.get f fs with 
-            | Some snd_level_map => snd_level_map
-            | None => PTree.empty _
-             end 
-        in
-        let newargs := PTree.set arg (n,e) args in
-        (atms, PTree.set f newargs fs)
-    | EAtom1 idx => (PTree.set idx (n,e) atms, fs)
-    end
-    end.
-
-
-(* Fascinant il y a une grande similarité entre set_enodes et map_enode_id *)
-
-Definition set_enodes :=
-    (* Set of EAtoms eclass_id and Set of EApp1 eclass_id eclass_id *)
-    (PTree.t idx_varmap * 
-    (* We keep the eclass_id instead of tt. This is because we don't have map_with_keys, so we keep the key int he value *)
-    PTree.t (PTree.t (eclass_id * eclass_id)) 
-    (* Similarly here we keep the pair of eclass_id, to represent the set of enodes of the form EApp1 idx_body idx_arg *)
-    )%type.
-
-
-Definition add_enode_set (m : set_enodes) (n : enode) :=
-    let '(atms, fs) := m in
-    match n with 
-    | EApp1 f arg =>
-        let args := match PTree.get f fs with 
-            | Some snd_level_map => snd_level_map
-            | None => PTree.empty _
-             end 
-        in
-        let newargs := PTree.set arg (f,arg) args in
-        (atms, PTree.set f newargs fs)
-    | EAtom1 idx => (PTree.set idx idx atms, fs)
-    end.
-
 
 
 

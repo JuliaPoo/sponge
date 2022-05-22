@@ -1,34 +1,120 @@
 Local Set Universe Polymorphism.
 Unset Universe Minimization ToSet.
 
+Set Default Goal Selector "!".
+Module Export Temp.
+
 Require Import PArith.
 Local Open Scope positive.
 Require EGraphList.
 Import EGraphList.
 Import EGraphList.ListNotations.
-
-
 Section DeepType.
-  Inductive type :=
-   | TBase : forall (t : positive), type
-   | TArrow: type -> type -> type.
+Inductive type :=
+ | TBase : forall (t : positive), type
+ | TArrow: type -> type -> type.
 
-  Fixpoint t_denote
-    (typemap : list Type)
-    (d : type) :=
-    match d with
-    | TBase e => EGraphList.nth (Pos.to_nat e - 1) typemap unit
-    | TArrow A B => (t_denote typemap A) -> (t_denote typemap B)
-    end.
+Definition lookup_type (typemap: list Type) (i: positive): Type :=
+  nth (Pos.to_nat i - 1) typemap unit.
 
-  Fixpoint type_eqb (t1 t2 : type) : bool :=
-  match t1, t2 with
-  | TBase n, TBase n' =>
-    Pos.eqb n n'
-  | TArrow a b, TArrow a' b' =>
-    type_eqb a a' && type_eqb b b'
-  | _,_ => false
+Fixpoint t_denote
+  (typemap : list Type)
+  (d : type) :=
+  match d with
+  | TBase e => 
+    lookup_type typemap e
+  | TArrow A B => (t_denote typemap A) -> (t_denote typemap B)
   end.
+
+Fixpoint type_eq_dec (t1 t2 : type) : {t1 = t2} + {t1 <> t2}.
+  refine (match t1, t2 with
+  | TBase n, TBase n' =>
+    _ (Pos.eq_dec n n')
+  | TArrow a b, TArrow a' b' =>
+    _
+  | _,_ => _
+  end).
+  {
+    intros.
+    destruct x.
+    - left. 
+      subst; eauto.
+    -
+      right.
+      intro.
+      inversion H.
+      contradiction.
+  }
+  {
+    right.
+    intro.
+    inversion H.
+  }
+  {
+    right.
+    intro.
+    inversion H.
+  }
+  {
+    pose proof type_eq_dec as H.
+    specialize (type_eq_dec a a').
+    specialize (H b b').
+    destruct H.
+    -
+      destruct type_eq_dec.
+      + 
+        subst.
+        left; eauto.
+      + 
+        subst.
+        right.
+        intro.
+        inversion H.
+        eauto.
+    -    
+        right.
+        intro.
+        inversion H.
+        eauto.
+  }
+  Defined.
+
+Fixpoint type_eqb (t1 t2 : type) : bool :=
+match t1, t2 with
+| TBase n, TBase n' =>
+  Pos.eqb n n'
+| TArrow a b, TArrow a' b' =>
+  type_eqb a a' && type_eqb b b'
+| _,_ => false
+end.
+
+Definition type_eqb_correct : forall (t1 t2 : type),
+  type_eqb t1 t2 = true -> t1 = t2.
+  induction t1.
+  - cbn.
+    destruct t2.
+    {
+      rewrite Pos.eqb_eq.
+      intros; eauto.
+      intros; inversion H.
+      eauto.
+    }
+    discriminate 1.
+  -
+      cbn.
+      intros.
+      destruct t2;
+      try inversion H; clear H.
+      cbn in *.
+      eapply Bool.andb_true_iff in H1.
+      destruct H1.
+      specialize IHt1_1 with (1:= H).
+      specialize IHt1_2 with (1:= H0).
+      rewrite IHt1_1.
+      rewrite IHt1_2.
+      eauto. 
+Qed. 
+
 End DeepType.
 
 Notation "A '~>' B" := (TArrow A B) (right associativity, at level 20).
@@ -53,6 +139,7 @@ Inductive dyn {typemap : list Type} :=
 Arguments dyn : clear implicits.
 
 Check mk_dyn [positive] `1 3.
+
 Section wf_term.
 Context (typemap : list Type) (constmap : list (dyn typemap)) (varmap : list (dyn typemap)).
 Fixpoint wf_term {t : type} (a : term t) :=
@@ -62,31 +149,426 @@ Fixpoint wf_term {t : type} (a : term t) :=
   | TVar n t =>
     match nth_error varmap (Pos.to_nat n - 1) with
     | Some d => 
-      type_eqb (dyn_type d) t
+      if (type_eq_dec (dyn_type d) t) then true else false
     | None =>
       false
     end
   | TConst n t =>
     match nth_error constmap (Pos.to_nat n - 1) with
     | Some d => 
-      type_eqb (dyn_type d) t
+      if type_eq_dec (dyn_type d) t then true else false
     | None =>
       false
     end
   end.
 End wf_term.
 
-Definition interp_term (typemap : list Type) (constmap : list)  (varmap : list ) 
-{t : type} (a : term t)
+Section interp_term.
+Context (typemap : list Type) (constmap : list (dyn typemap)) (varmap : list (dyn typemap)).
+Definition computable_andb_true_iff :=
+  fun b1 b2 : bool =>
+  if b2 as b return ((b1 && b)%bool = true <-> b1 = true /\ b = true)
+  then
+   if b1 as b return ((b && true)%bool = true <-> b = true /\ true = true)
+   then
+    conj (fun _ : true = true => conj eq_refl eq_refl)
+    (fun H : true = true /\ true = true =>
+       and_ind (fun _ _ : true = true => eq_refl) H)
+    :
+    (true && true)%bool = true <-> true = true /\ true = true
+   else
+    conj (fun H : false = true => conj H eq_refl)
+      (fun H : false = true /\ true = true =>
+       and_ind (fun (H0 : false = true) (_ : true = true) => H0) H)
+    :
+    (false && true)%bool = true <-> false = true /\ true = true
+  else
+   if b1 as b return ((b && false)%bool = true <-> b = true /\ false = true)
+   then
+    conj (fun H : false = true => conj eq_refl H)
+      (fun H : true = true /\ false = true =>
+       and_ind (fun (_ : true = true) (H1 : false = true) => H1) H)
+    :
+    (true && false)%bool = true <-> true = true /\ false = true
+   else
+    conj (fun H : false = true => conj H H)
+      (fun H : false = true /\ false = true =>
+       and_ind (fun _ H1 : false = true => H1) H)
+    :
+    (false && false)%bool = true <-> false = true /\ false = true.
+  
+Definition interp_term {t : type} (a : term t) (wf : wf_term typemap constmap varmap a = true)
 : t_denote typemap t.
- induction f.
-  -
-  cbn in *.
-  eauto.
-  - destruct t0.
+ induction a.
+ -
+  simpl in *.
+  eapply computable_andb_true_iff in wf.
+  destruct wf.
+  specialize (IHa1 H).
+  specialize (IHa2 H0).
+  exact (IHa1 IHa2).
+- 
+  simpl in wf.
+  destruct nth_error in wf.
+  2:{ discriminate. }
+  destruct d.
+  destruct (type_eq_dec) in wf.
+  2:{ discriminate. }
+  simpl in e.
+  rewrite e in dyn_val0.
+  exact dyn_val0.
+-  
+  simpl in wf.
+  destruct nth_error in wf.
+  2:{ discriminate. }
+  destruct d.
+  destruct type_eq_dec in wf.
+  2:{ discriminate. }
+  simpl in e.
+  rewrite e in dyn_val0.
+  exact dyn_val0.
+  Defined.
+
+End interp_term. 
+Ltac CASE l ret :=
+let __ := match O with
+| _ => assert_succeeds l
+end in ret.
+
+
+
+Ltac inList e l :=
+  lazymatch l with
+  | nil =>
+  false
+  | cons ?t ?l =>
+    let res := match O with
+    | _ =>
+    CASE ltac:(
+      first [constr_eq e t ]
+      ) true
+    | _ =>
+    inList e l
+    end in res
+  end.
+
+Ltac indexList e l :=
+  match l with
+  | nil => constr:(false)
+  | cons e _ => constr:(O%nat)
+  | cons _ ?l =>
+    let n := indexList e l in
+    constr:((S n)%nat)
+  end.
+
+
+Ltac indexDynList e l :=
+  match l with
+  | nil => constr:(false)
+  | cons {| dyn_type := ?t; dyn_val := e|} _  => constr:((O%nat, t))
+  | cons _ ?l =>
+    match indexDynList e l with
+    | false => constr:(false)
+    | (?n, ?res) =>
+    constr:(((S n)%nat, res))
+    end
+  end.
+
+Ltac addList e l :=
+  let member := inList e l in
+ (* let __ := match O with | _ => idtac "addlist" e l member end in *)
+  match member with
+  | true => l
+  | false =>
+  let newl := eval cbv [app] in (app l (cons e nil)) in
+ (* let __ := match O with | _ => idtac "appendlist" end in *)
+   newl
+  end.
+
+Definition index := nat.
+
+Ltac reify_type tmap t :=
+  match t with
+  | ?a -> ?b =>
+    let s1 := reify_type tmap a in
+    let s2 := reify_type tmap b in
+    constr:(s1 ~> s2)
+  | _ =>
+    let dt := indexList t tmap in
+    let idx := eval cbv in (Pos.of_nat (1 + dt)) in
+     constr:(TBase idx)
+  end.
+
+Ltac extend_constmap_with_atom tmap acc expr :=
+  (* Can fail if expr does not have a type that can be expressed in tmap *)
+  let t := type of expr in
+  let tmap' := eval unfold tmap in tmap in 
+  let deeply_represented := reify_type tmap' t in
+  addList {| dyn_type := deeply_represented ; dyn_val := expr : (t_denote tmap deeply_represented)|} acc.
+
+Ltac extend_constmap tmap acc expr :=
+  lazymatch expr with
+  | ?a ?b  =>
+    let ta := type of a in
+    match ta with 
+    |  ?A -> ?B => 
+      let acc := extend_constmap tmap acc a in
+      let acc := extend_constmap tmap acc b in
+      acc
+    | _ => 
+      extend_constmap_with_atom tmap acc expr
+    end
+  | ?a =>
+    extend_constmap_with_atom tmap acc expr
+  end.
+
+Ltac extend_typemap_with_t acc t :=
+  match t with
+  | ?a -> ?b =>
+      let acc' := extend_typemap_with_t acc a in
+      let acc'' := extend_typemap_with_t acc' b in
+      acc''
+  | ?a =>
+    addList (a : Type) acc
+  end.
+
+Ltac extend_typemap acc expr :=
+  lazymatch expr with
+  | ?a ?b  =>
+    let ta := type of a in 
+    let tb := type of b in 
+    (* let __ := match O with | _ => idtac "extend with a" "(" a ":" ta ")" " b" "(b" ":" tb ")" "acc" acc end in *)
+    let texpr := type of expr in 
+    (* let __ := match O with | _ => idtac "try to extend by one with " "(" expr ":" texpr ")" "acc" acc end in *)
+    let acc := extend_typemap_with_t acc texpr in
+    (* let __ := match O with | _ => idtac "extended" end in *)
+    lazymatch type of a with 
+    | ?A -> ?B => 
+      let acc' := extend_typemap acc a in
+      let acc'' := extend_typemap acc' b in
+      acc'' 
+    | _ => acc
+    end
+  | ?a =>
+    let ta := type of a in
+    extend_typemap_with_t acc ta
+  end.
+
+
+
+
+Goal forall A C (B : (nat -> Prop) -> Prop) E ( D:Prop),
+  A /\ (B E) \/ C -> False.
+  intros.
+  let t := type of H in
+  let tmap'  := extend_typemap (nil : list Type) t in
+  let tmap := fresh "tmap" in 
+  pose tmap' as tmap;
+  let map := extend_constmap tmap (nil : list (dyn tmap)) t in
+  idtac tmap;
+  idtac map.
+  Abort.
+
+Goal forall (l : Coq.Init.Datatypes.list nat),
+  Coq.Init.Datatypes.app l l = Coq.Init.Datatypes.nil -> False.
+  intros.
+  let t := type of H in
+  let tmap' := extend_typemap (nil : list Type) t in
+  let tmap := fresh "tmap" in 
+  pose tmap' as tmap;
+  let map := extend_constmap tmap (nil : list (dyn tmap)) t in
+  idtac tmap;
+  idtac map.
+  Abort.
+
+Ltac reify_constant typemap constmap varmap expr :=
+  (* let __ := match O with | _ => idtac "Searching for constant" expr "in" constmap  end in *)
+  match indexDynList expr constmap with 
+  | false => 
+    fail "Did not find constant" expr "in constmap" constmap
+  | (?n, ?t) =>
+    let n := eval cbv in (Pos.of_nat (1 + n)) in
+    constr:(TConst n t) 
+  end.
+
+Ltac reify_expr typemap constmap varmap expr :=
+lazymatch expr with
+ | ?a ?b =>
+    let ta := type of a in
+    let tb := type of b in
+    (* let __ := match O with | _ => idtac "Try to reify " "a : (" a ":" ta ")" " b :" "(" b ":" tb ")"  end in *)
+    lazymatch type of a with 
+    | ?A -> ?B => 
+      let ra := reify_expr typemap constmap varmap a in
+      (* let __ := match O with | _ => idtac "successfully reifed a" a "by" ra  end in *)
+      let rb := reify_expr typemap constmap varmap b in
+      (* let __ := match O with | _ => idtac "successfully reifed b" b "by" rb  end in *)
+      let res := constr:(TApp ra rb) in 
+      (* let __ := match O with | _ => idtac "app worked resulting in res" res end in *)
+      res
+    | _ => 
+    (* let __ := match O with | _ => idtac "Found an atomic application" expr end in *)
+    reify_constant typemap constmap varmap expr
+    end
+| ?a =>
+  lazymatch indexDynList expr varmap with 
+  | false =>  
+  (* It is not a quantifier *)
+    (* let __ := match O with | _ => idtac "Reifing a constant" expr  end in *)
+    reify_constant typemap constmap varmap expr
+  | (?n, ?t) =>
+    let n := eval cbv in (Pos.of_nat (1 + n)) in
+    constr:(TVar n t) 
+  end
+end.
+
+Goal forall (l : Coq.Init.Datatypes.list nat),
+  Coq.Init.Datatypes.app l l = Coq.Init.Datatypes.nil -> False.
+  intros.
+  Time let t := type of H in
+  let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
+  pose tmap as ltm;
+  let map := extend_constmap ltm (EGraphList.nil : EGraphList.list (dyn ltm)) t in
+  pose map; 
+  let tH := type of H in 
+  let rH := reify_expr tmap map (@EGraphList.nil (dyn tmap)) tH in 
+  pose rH.
+  Abort.
+End Temp.
+
+Require Coq.Lists.List. Import List.ListNotations.
+Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
+Require Import Coq.micromega.Lia.
+Require Import Coq.Logic.PropExtensionality.
+
+Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
+Module PropLemmas.
+  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
+  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
+  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
+  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
+End PropLemmas.
+
+
+Section WithLib.
+  Context (word: Type)
+          (ZToWord: Z -> word)
+          (unsigned: word -> Z)
+          (wsub: word -> word -> word)
+          (wadd: word -> word -> word)
+          (wopp: word -> word).
+
+  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
+          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
+          (wadd_comm: forall a b, wadd a b = wadd b a)
+          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
+
+  (* Preprocessing: *)
+  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
+
+  (* With sideconditions: *)
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+
+  Context (mem: Type)
+          (word_array: word -> list word -> mem -> Prop)
+          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
+
+  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
+
+  Ltac pose_list_lemmas :=
+    pose proof (@List.firstn_cons word) as firstn_cons;
+    pose proof (@List.skipn_cons word) as skipn_cons;
+    pose proof (@List.app_comm_cons word) as app_cons;
+    pose proof (@List.firstn_O word) as firstn_O;
+    pose proof (@List.skipn_O word) as skipn_O;
+    pose proof (@List.app_nil_l word) as app_nil_l;
+    pose proof (@List.app_nil_r word) as app_nil_r.
+
+  Ltac pose_prop_lemmas :=
+    pose proof PropLemmas.and_True_l as and_True_l;
+    pose proof PropLemmas.and_True_r as and_True_r;
+    pose proof PropLemmas.eq_eq_True as eq_eq_True.
+
+  Definition lipstick {A:Type} {a:A} := a.
+
+  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
+                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
+        (f g: word -> word) (b: word)
+        (HL: length vs = 3%nat)
+        (H : sep (word_array a
+          (List.firstn
+             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs) ++
+           [w2] ++
+           List.skipn
+             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs))) R m),
+      f (wadd b a) = g b /\
+      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
+      f (wadd b a) = f (wadd a b).
+  Proof.
+    intros.
+
+    pose_list_lemmas.
+    pose_prop_lemmas.
+
+    intros.
+    specialize (eq_eq_True word).
+
+    (* Make problems simpler by only considering one combination of the booleans,
+       but it would be nice to treat all of them at once *)
+    replace cond0_0 with false in * by admit.
+    replace cond0 with false in * by admit.
+
+    (* Make problem simpler by not requiring side conditions: since we know the
+       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
+       be on cons without sideconditions rather than on app with side conditions
+       on length *)
+    destruct vs as [|v0 vs]. 1: discriminate HL.
+    destruct vs as [|v1 vs]. 1: discriminate HL.
+    destruct vs as [|v2 vs]. 1: discriminate HL.
+    destruct vs as [|v3 vs]. 2: discriminate HL.
+    clear HL.
     cbn.
-    exact state0.
-Defined.
+    (* cbn in H. <-- We don't do this cbn because now that we've done the above
+       destructs, cbn can do much more than it usually would be able to do. *)
+
+    (* Preprocessing *)
+    rewrite wsub_def in *.
+    clear wsub_def.
+    apply PropLemmas.eq_True in H.
+
+    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
+    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
+
+    (* Constant propagation rules, manually chosen to make things work,
+       TODO how to automate? *)
+    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
+
+  Ltac reify_interp_roundtrip h := 
+   let t := type of h in
+   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
+   let tname := fresh "tm" in
+   pose tmap as tname;
+   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
+   (* idtac "tmap" tmap "constmap" cmap; *)
+   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
+   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl ).
+
+  Time reify_interp_roundtrip H.
+  let tH := type of H in 
+  assert (t = tH) .
+  + Time reflexivity.
+  { subst t.  
+  Compute (type_eq_dec (`1~>`2) (`1 ~> `2)).
+
+  Print type_eq_dec.
+  subst t. Time reflexivity. }
+
+  vm in t.
 
 Require Import Arith.
 Require Import Enodes.
@@ -134,45 +616,6 @@ Section egraphs.
   Qed.
 
 
-  Fixpoint dt_eq' (t1 t2 : type) : {t1 = t2} + {t1 <> t2}.
-  refine (match t1, t2 with
-  | TBase n, TBase n' =>
-    _ (Nat.eq_dec n n')
-  | TArrow a b, TArrow a' b' =>
-    _
-  | _,_ => _
-  end).
-  intros.
-  destruct x.
-  left. subst; eauto.
-  right.
-  intro.
-  inversion H.
-  subst.
-  eapply n0; eauto.
-  right.
-  intro.
-  inversion H.
-  right.
-  intro.
-  inversion H.
-      pose proof dt_eq'.
-      specialize (dt_eq' a a').
-      specialize (H b b').
-      destruct H.
-      destruct dt_eq'.
-      subst.
-      left; eauto.
-      subst.
-      right.
-      intro.
-      inversion H.
-      eauto.
-      right.
-      intro.
-      inversion H.
-      eauto.
-      Defined.
 
   Lemma dteq_refl : forall t,
   dt_eq t t = true .
@@ -3628,47 +4071,7 @@ Ltac listFromProp' tmap acc input_prop :=
     let newa :=  eval cbv  [ Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value tmap deeply_represented nil eq_refl a) in
     addList {| T := deeply_represented ; state := newa : (t_denote (typemap:= tmap) deeply_represented)|} acc
   end.
-Ltac reify_prop' quantifiermap typemap varmap prop :=
-match prop with
- | id_mark ?n ?x =>
- let s :=
- constr:(PVar (ctx:= varmap) (typemap:=typemap) (quantifiermap := quantifiermap) n eq_refl) in
- let __ := match O with | _ => idtac "newyo" end in
- s
- | ?a ?b =>
-    lazymatch type of b with 
-        | Prop => 
-  let acc1 := reify_prop' quantifiermap typemap varmap a in
- (* let __ := match O with | _ => idtac "APPreify_prop'" acc1 b end in *)
-  let acc2 := reify_prop' quantifiermap typemap varmap b in
- (* let __ := match O with | _ => idtac "APPreify_prop'" acc2 end in *)
-  let res:= constr:(PApp1 (quantifiermap := quantifiermap) (typemap := typemap) acc1 acc2) in
- (* let __ := match O with | _ => idtac "APPreify_prop'" res end in *)
- res
-        | Type => fail
-        | _ => 
-  let acc1 := reify_prop' quantifiermap typemap varmap a in
- (* let __ := match O with | _ => idtac "APPreify_prop'" acc1 b end in *)
-  let acc2 := reify_prop' quantifiermap typemap varmap b in
- (* let __ := match O with | _ => idtac "APPreify_prop'" acc2 end in *)
-  let res:= constr:(PApp1 (quantifiermap := quantifiermap) (typemap := typemap) acc1 acc2) in
- (* let __ := match O with | _ => idtac "APPreify_prop'" res end in *)
- res
- end
-| ?a =>
-  let t := type of a in
-  (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" a t end in *)
-  let deeply_represented := funToTArrow typemap t in
-  (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" deeply_represented end in *)
-  let newa :=  eval cbv  [  Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value typemap deeply_represented nil eq_refl a) in
-  (* idtac deeply_represented a varmap; *)
-  let idx := indexList {| T := deeply_represented ; state := newa :(t_denote (typemap:= typemap) deeply_represented) |} varmap in
-  (* let __ := match O with | _ => idtac "ATOMStartreify_prop'" idx end in *)
-  let res :=   constr:(@PAtom1 typemap quantifiermap varmap (Pos.of_nat idx + 1) _ eq_refl) in
- (* let __ := match O with | _ => idtac "ATOMEndreify_prop'" idx res end in *)
- res
 
-end.
 (* 
 Ltac reify_hyp H oldtypemap oldvarmap x :=
   idtac "start reify hyp";
@@ -5873,82 +6276,6 @@ End NonSamsam.
 
 
 
-
-Require Coq.Lists.List. Import List.ListNotations.
-Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
-Require Import Coq.micromega.Lia.
-Require Import Coq.Logic.PropExtensionality.
-
-Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
-Module PropLemmas.
-  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
-  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
-  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
-  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
-End PropLemmas.
-
-
-Section WithLib.
-  Context (word: Type)
-          (ZToWord: Z -> word)
-          (unsigned: word -> Z)
-          (wsub: word -> word -> word)
-          (wadd: word -> word -> word)
-          (wopp: word -> word).
-
-  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
-          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-          (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
-
-  (* Preprocessing: *)
-  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
-
-  (* With sideconditions: *)
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
-
-  Context (mem: Type)
-          (word_array: word -> list word -> mem -> Prop)
-          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
-
-  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
-
-  Ltac pose_list_lemmas :=
-    pose proof (@List.firstn_cons word) as firstn_cons;
-    pose proof (@List.skipn_cons word) as skipn_cons;
-    pose proof (@List.app_comm_cons word) as app_cons;
-    pose proof (@List.firstn_O word) as firstn_O;
-    pose proof (@List.skipn_O word) as skipn_O;
-    pose proof (@List.app_nil_l word) as app_nil_l;
-    pose proof (@List.app_nil_r word) as app_nil_r.
-
-  Ltac pose_prop_lemmas :=
-    pose proof PropLemmas.and_True_l as and_True_l;
-    pose proof PropLemmas.and_True_r as and_True_r;
-    pose proof PropLemmas.eq_eq_True as eq_eq_True.
-
-  Import NonSamsam.
-  Definition lipstick {A:Type} {a:A} := a.
-
-  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
-                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
-        (f g: word -> word) (b: word)
-        (HL: length vs = 3%nat)
-        (H : sep (word_array a
-          (List.firstn
-             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs) ++
-           [w2] ++
-           List.skipn
-             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs))) R m),
-      f (wadd b a) = g b /\
-      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
-      f (wadd b a) = f (wadd a b).
-  Proof.
     pose_list_lemmas.
     pose_prop_lemmas.
 
@@ -6128,130 +6455,6 @@ Time Qed.
 
 Notation "'<<' s '>>'" := (generic_embed s) (only parsing).
 
-Ltac inList e l :=
-  lazymatch l with
-  | nil =>
-  false
-  | cons ?t ?l =>
-    let res := match O with
-    | _ =>
-    CASE ltac:(
-      first [constr_eq e t ]
-      ) true
-    | _ =>
-    inList e l
-    end in res
-  end.
-
-Ltac indexList e l :=
-  match l with
-  | nil => constr:(false)
-  | cons e _ => constr:(O%nat)
-  | cons _ ?l =>
-    let n := indexList e l in
-    constr:((S n)%nat)
-  end.
-
-Ltac addList e l :=
-  let member := inList e l in
- (* let __ := match O with | _ => idtac "addlist" e l member end in *)
-  match member with
-  | true => l
-  | false =>
-  let newl := eval cbv [app] in (app l (cons e nil)) in
- (* let __ := match O with | _ => idtac "appendlist" end in *)
-   newl
-  end.
-Definition index := nat.
-Ltac CASE l ret :=
-let __ := match O with
-| _ => assert_succeeds l
-end in ret.
-
-
-Ltac funToTArrow tmap t :=
-  match t with
-  | ?a -> ?b =>
-    let s1 := funToTArrow tmap a in
-    let s2 := funToTArrow tmap b in
-    constr:(s1 ~> s2)
-  | _ =>
-    let dt := indexList t tmap in
-     constr:(TBase dt)
-  end.
-
-(* Le probleme c'set qu'il faut rajouter les TBase types aussi *)
-Ltac listTypesFromProp acc input_prop :=
- (* let __ := match O with | _ => idtac "listnewitem" acc input_prop end in *)
-  match input_prop with
-  | ?a ?b  =>
-    lazymatch type of b with 
-    | Prop => 
-    let acc' := listTypesFromProp acc a in
- (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
-    let acc'' := listTypesFromProp acc' b in
-    let t := type of input_prop in
-    match t with 
-    | _ -> _ => 
-      acc''
-    | _ =>
-     addList (t:Type) acc''
-     end
-        | Type => fail
-        | _ => 
-    let acc' := listTypesFromProp acc a in
- (* let __ := match O with | _ => idtac "listnew1" acc' end in *)
-    let acc'' := listTypesFromProp acc' b in
- (* let __ := match O with | _ => idtac "listnew2" acc'' end in *)
-    let t := type of input_prop in
-    match t with 
-    | _ -> _ => 
-      acc''
-    | _ =>
-     addList (t:Type) acc''
-     end
-    end
-  | ?a =>
-    let t := type of a in
-    match t with 
-    | _ -> _ => 
-      acc 
-    | _ =>
-    addList (t : Type) acc
-    end
-  end.
-
-
-Ltac listFromProp tmap acc input_prop :=
-  match input_prop with
-  | ?a ?b  =>
-     lazymatch type of b with 
-     |Prop => 
-  let acc := listFromProp tmap acc a in
-    let acc := listFromProp tmap acc b in
-    acc
-        | Type => fail
-        | _ => 
-    let acc := listFromProp tmap acc a in
-    let acc := listFromProp tmap acc b in
-    acc
-        end
-  | ?a =>
-    let t := type of a in
-    let deeply_represented := funToTArrow tmap t in
-    addList {| T := deeply_represented ; state := a : (t_denote (typemap:= tmap) deeply_represented)|} acc
-  end.
-
-
-Goal forall A C (D:Prop),
-  A /\ A \/ C -> False.
-  intros.
-  let t := type of H in
-  let tmap := listTypesFromProp (nil : list Type) t in
-  let map := listFromProp tmap (nil : list (SModule (typemap := tmap))) t in
-  idtac tmap;
-  idtac map.
-  Abort.
 
 Section Term.
   Context {typemap : list Type}.

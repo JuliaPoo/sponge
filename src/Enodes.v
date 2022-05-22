@@ -476,6 +476,49 @@ Module PTree.
       destruct l, o, r; intros; simpl; intros; auto. 
     Qed.
     End TREE_FOLD.
+    Section TREE_ANY.
+
+    Context {A: Type}.
+
+    Fixpoint tree_any' (m: tree' A) : option A :=
+      match m with
+      | Node001 r => tree_any' r
+      | Node010 x => Some x 
+      | Node011 x _r => Some x 
+      | Node100 l => tree_any' l 
+      | Node101 l r => 
+        match tree_any' l with 
+        | Some x => Some x 
+        | None => tree_any' r
+        end
+      | Node110 l x => Some x 
+      | Node111 l x _r => 
+        Some x
+      end.
+
+    Definition tree_any (m: tree A) : option A :=
+      match m with
+      | Empty => None 
+      | Nodes m' => tree_any' m'
+      end.
+
+    Lemma unroll_tree_any : forall l o r,
+      tree_any (Node l o r) = (match o with 
+                                  | Some o => Some o 
+                                  | None => 
+                                    match tree_any l with 
+                                    | Some x => Some x 
+                                    | None => tree_any r 
+                                    end
+                                  end).
+    Proof.
+      Local Transparent Node.
+      destruct l, o, r; simpl; intros; auto.
+      destruct (tree_any' t0); eauto.
+      Local Opaque Node.
+    Qed.
+
+    End TREE_ANY.
     (** *** An induction principle *)
 
     (** We now define a more general induction principle that supports

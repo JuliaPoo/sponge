@@ -528,8 +528,6 @@ Goal forall (l : Coq.Init.Datatypes.list nat),
 Require Import Enodes.
 Require Import Lia.
 Section egraphs.
-  Context {typemap : list Type}.
-  Context {constmap : list (dyn typemap)}.
 
   Definition eclass_id := positive.
   Definition idx_constmap := positive.
@@ -762,145 +760,23 @@ Section egraphs.
     lookup e f = Some c ->
     classIsCanonical e c.
 
-End egraphs.
-End Temp.
 
-Require Coq.Lists.List. Import List.ListNotations.
-Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
-Require Import Coq.micromega.Lia.
-Require Import Coq.Logic.PropExtensionality.
-
-Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
-Module PropLemmas.
-  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
-  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
-  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
-  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
-End PropLemmas.
-
-
-Section WithLib.
-  Context (word: Type)
-          (ZToWord: Z -> word)
-          (unsigned: word -> Z)
-          (wsub: word -> word -> word)
-          (wadd: word -> word -> word)
-          (wopp: word -> word).
-
-  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
-          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-          (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
-
-  (* Preprocessing: *)
-  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
-
-  (* With sideconditions: *)
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
-
-  Context (mem: Type)
-          (word_array: word -> list word -> mem -> Prop)
-          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
-
-  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
-
-  Ltac pose_list_lemmas :=
-    pose proof (@List.firstn_cons word) as firstn_cons;
-    pose proof (@List.skipn_cons word) as skipn_cons;
-    pose proof (@List.app_comm_cons word) as app_cons;
-    pose proof (@List.firstn_O word) as firstn_O;
-    pose proof (@List.skipn_O word) as skipn_O;
-    pose proof (@List.app_nil_l word) as app_nil_l;
-    pose proof (@List.app_nil_r word) as app_nil_r.
-
-  Ltac pose_prop_lemmas :=
-    pose proof PropLemmas.and_True_l as and_True_l;
-    pose proof PropLemmas.and_True_r as and_True_r;
-    pose proof PropLemmas.eq_eq_True as eq_eq_True.
-
-  Definition lipstick {A:Type} {a:A} := a.
-
-  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
-                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
-        (f g: word -> word) (b: word)
-        (HL: length vs = 3%nat)
-        (H : sep (word_array a
-          (List.firstn
-             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs) ++
-           [w2] ++
-           List.skipn
-             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs))) R m),
-      f (wadd b a) = g b /\
-      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
-      f (wadd b a) = f (wadd a b).
-  Proof.
-    intros.
-
-    pose_list_lemmas.
-    pose_prop_lemmas.
-
-    intros.
-    specialize (eq_eq_True word).
-
-    (* Make problems simpler by only considering one combination of the booleans,
-       but it would be nice to treat all of them at once *)
-    replace cond0_0 with false in * by admit.
-    replace cond0 with false in * by admit.
-
-    (* Make problem simpler by not requiring side conditions: since we know the
-       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
-       be on cons without sideconditions rather than on app with side conditions
-       on length *)
-    destruct vs as [|v0 vs]. 1: discriminate HL.
-    destruct vs as [|v1 vs]. 1: discriminate HL.
-    destruct vs as [|v2 vs]. 1: discriminate HL.
-    destruct vs as [|v3 vs]. 2: discriminate HL.
-    clear HL.
-    cbn.
-    (* cbn in H. <-- We don't do this cbn because now that we've done the above
-       destructs, cbn can do much more than it usually would be able to do. *)
-
-    (* Preprocessing *)
-    rewrite wsub_def in *.
-    clear wsub_def.
-    apply PropLemmas.eq_True in H.
-
-    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
-    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
-
-    (* Constant propagation rules, manually chosen to make things work,
-       TODO how to automate? *)
-    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
-
-  Ltac reify_interp_roundtrip h := 
-   let t := type of h in
-   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
-   let tname := fresh "tm" in
-   pose tmap as tname;
-   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
-   (* idtac "tmap" tmap "constmap" cmap; *)
-   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
-   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl).
-
-  Time reify_interp_roundtrip H.
-  let tH := type of H in 
-  assert (t = tH) .
-  + Time reflexivity.
 (* We stopped HERE *)
          (* if t = Prop then *)
           (* interp_formula ctx f <-> interp_formula ctx g; *)
         (* else  *)
-  Record invariant_egraph e : Prop := {
-      correct: forall t (f g : formula t) (eid : eclass_id),
-        lookupf f e = some eid ->
-        lookupf g e = some eid ->
 
-          interp_formula ctx f = interp_formula ctx g;
+  Context {typemap : list Type}.
+  Context {constmap : list (dyn typemap)}.
+  (* Context {varmap : list (dyn typemap)}. *)
+  Record invariant_egraph e : Prop := {
+      correct: forall t (f g : term t) (eid : eclass_id)
+      (wf_f : wf_term typemap constmap [] f = true)
+      (wf_g : wf_term typemap constmap [] g = true),
+      lookup_term f e = Some eid ->
+      lookup_term g e = Some eid ->
+      interp_term typemap constmap [] f wf_f = interp_term typemap constmap [] g wf_g;
+
       nobody_outside :
        forall a (eid : eclass_id),
           lookup e a = Some eid ->
@@ -910,7 +786,7 @@ Section WithLib.
                 (e1 : eclass_id)
                 (e2 : eclass_id)
                 ,
-          lookup e (EApp1 e1 e2) = Some eid ->
+          lookup e (EApp e1 e2) = Some eid ->
           (find (uf e) e1 < max_allocated e)%positive /\
           (find (uf e) e2 < max_allocated e)%positive;
       sanely_assigned_lookup :
@@ -919,2576 +795,46 @@ Section WithLib.
         forall (a: eclass_id), (a >= max_allocated e)%positive ->
           classIsCanonical e a;
       wt_egraph:
-        forall {t1 t2} (f1 : Formula t1) (f2 : Formula t2) (c : eclass_id),
-        lookupF f1 e = Some c ->
-        lookupF f2 e = Some c ->
+        forall {t1 t2} (f : term t1) (g : term t2) (c : eclass_id)
+        (wf_f : wf_term typemap constmap [] f = true)
+        (wf_g : wf_term typemap constmap [] g = true),
+        lookup_term f e = Some c ->
+        lookup_term g e = Some c ->
         t1 = t2;
       wf_uf:
         forall (c : eclass_id),
           (c < max_allocated e)%positive ->
           (find (uf e) c < max_allocated e)%positive;
       }.
-Ltac auto_specialize :=
-  match goal with
-  | H : ?a,  H' : ?a -> _  |- _ =>
-    let t := type of a in
-    constr_eq t Prop;
-    specialize( H' H)
-  | H : ?a,  H' :  _  |- _ =>
-    let t := type of a in
-    constr_eq t Prop;
-    specialize H' with (1:= H)
-  |  H' :  _  |- _ =>
-    specialize H' with (1:= eq_refl)
-  end.
 
-  Ltac cleanup' := intros;
-  repeat match goal with
-  | H: _ /\ _ |- _ => destruct H
-  | H: _ <-> _ |- _ => destruct H
-  | H: exists _, _  |- _ => destruct H
-  | H: True  |- _ => clear H
-  | H : ?a = ?b, H' : ?a = ?b |- _ => clear H'
-  | H : ?P, H' : ?P |- _ =>
-    let t := type of P in
-    assert_succeeds(constr_eq t Prop);
-    clear H'
-  end.
-  Open Scope positive.
+  Lemma add_term_safe : forall {t} (f : term t) e ,
+    invariant_egraph e ->
+    let '(newe, _eid) := add_term e f in
+    invariant_egraph newe.
+       Admitted.
 
-Theorem nobody_lookupF_outside e :
-  invariant_egraph e ->
-  forall t (a : Formula t) (eid : eclass_id),
-    lookupF a e = Some eid ->
-    eid < max_allocated e.
-  intro.
-  induction a.
-  (* -
-    cbn.
-    intros.
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct H.
-    eapply nobody_outside0; eauto. *)
-  -
-    cbn.
-    intros.
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct H.
-    eapply nobody_outside0; eauto.
-  -
-    cbn.
-    intros.
-    unfold lookup in H0.
-    destruct H.
-    eapply nobody_outside0; eauto.
-  Qed.
-
-
-Theorem lookupF_canonical e  :
-  invariant_egraph e ->
-  forall {t} (f : Formula t) (c : eclass_id),
-   lookupF f e = Some c ->
-   classIsCanonical e c.
-   intro.
-   induction f.
-  -
-    intros; cbn in H0.
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    destruct (lookupF _ _) eqn:? in H0.
-    2:{ inversion H0. }
-    repeat auto_specialize.
-    destruct H.
-    unfold n2idCanonical in sanely_assigned_lookup0.
-    cleanup'.
-    repeat auto_specialize.
-    eauto.
-  -
-    intros.
-    cbn in H0.
-    unfold lookup in H0.
-    cbn in H0.
-    destruct H.
-    unfold n2idCanonical in sanely_assigned_lookup0.
-    cleanup'.
-    eapply sanely_assigned_lookup0 with (f:=EAtom1 n).
-    eauto.
-  Qed.
-
-  Lemma dt_eq'_refl : forall {t},
-  exists p, dt_eq' t t = left p.
-  induction t.
-  - cbn.
-    pose (nat_eq_refl t).
-    destruct e.
-    rewrite H.
-    destruct x.
-    cbn.
-    eexists; eauto.
-  -
-    destruct IHt1.
-    destruct IHt2.
-    destruct x.
-    destruct x0.
-    cbn.
-    rewrite H0.
-    rewrite H.
-    cbn.
-    eexists; eauto.
-  Qed.
-
-
-
-
-  (* TODO this lemma will be a good exercise for exams in the future *)
-  Lemma dt_sane : forall td t1, dt_eq (t1 ~> td) td = false.
-  induction td.
-  -
-    cbn; eauto.
-  -
-    cbn in *.
-    intros.
-    destruct td2.
-    2:{
-      specialize (IHtd2 td2_1).
-      eapply Bool.andb_false_iff in IHtd2.
-      destruct IHtd2.
-      erewrite dteq_refl in H.
-      inversion H.
-      rewrite H.
-      eapply Bool.andb_false_iff .
-      right.
-      eapply Bool.andb_false_iff .
-      right; eauto.
-    }
-      eapply Bool.andb_false_iff .
-      right; eauto.
-      Qed.
-  Lemma dt_sanef : forall t1 td , dt_eq (t1 ~> td) t1 = false.
-  induction t1.
-  -
-    cbn; eauto.
-  -
-    cbn in *.
-    intros.
-    destruct t1_1.
-    eauto.
-    {
-      specialize (IHt1_1 t1_2).
-      eapply Bool.andb_false_iff in IHt1_1 .
-      destruct IHt1_1.
-      rewrite H; eauto.
-      rewrite H.
-      rewrite Bool.andb_comm.
-      rewrite Bool.andb_assoc.
-      rewrite Bool.andb_comm.
-      cbn. eauto.
-    }
-    Qed.
-  (* TODO this lemma will be a good exercise for exam in the future *)
-  Lemma dt_sane2 : forall td t1 t2, dt_eq (t1 ~> t2 ~> td) td = false.
-  induction td.
-  -
-    cbn; eauto.
-  -
-    cbn in *.
-    intros.
-    destruct td2.
-    2:{
-      specialize (IHtd2 td2_1).
-      eapply Bool.andb_false_iff in IHtd2.
-      destruct IHtd2.
-      erewrite dteq_refl in H.
-      inversion H.
-      rewrite H.
-      eapply Bool.andb_false_iff .
-      right.
-      eapply Bool.andb_false_iff .
-      right; eauto.
-    }
-      eapply Bool.andb_false_iff .
-      right; eauto.
-   Qed.
-
-  Lemma dt_sane2f : forall t1 t2 td, dt_eq (t1 ~> t2 ~> td) t1 = false.
-  induction t1.
-  -
-    cbn; eauto.
-  -
-    cbn in *.
-    intros.
-    case t1_1 eqn:?.
-    simpl;eauto.
-    case t1_2 eqn:?.
-    rewrite Bool.andb_comm.
-    cbn; eauto.
-    {
-      destruct d2.
-      {
-      eapply Bool.andb_false_iff in IHt1_1.
-      destruct IHt1_1.
-      rewrite H; eauto.
-      rewrite Bool.andb_comm.
-      rewrite Bool.andb_assoc.
-      rewrite Bool.andb_comm.
-      cbn. eauto.
-      exact t2.
-      exact t2.
-      }
-      {
-        specialize (IHt1_1 d2_1 d2_2).
-      eapply Bool.andb_false_iff in IHt1_1.
-      destruct IHt1_1.
-      rewrite H; eauto.
-      rewrite dteq_refl in H.
-      rewrite dteq_refl in H.
-      cbn in *; inversion H.
-      }
-    }
-   Qed.
-
-  Fixpoint node_size (t : type ) :=
-    match t with
-    | TBase n => 1
-    | TArrow a b => 1 + node_size a + node_size b
-    end.
-
-  Lemma size_eq_dt : forall t1 t2, dt_eq t1 t2 = true -> node_size t1 = node_size t2.
-    induction t1.
-    -
-      cbn.
-      destruct t2.
-      intros.
-      eauto.
-      intros. inversion H.
-    -
-      intros.
-      cbn in *.
-      destruct t2.
-      inversion H.
-      cbn.
-      eapply Bool.andb_true_iff in H.
-      cleanup'.
-      erewrite IHt1_1; eauto.
-      erewrite IHt1_2; eauto.
-    Qed.
-
-  Require Import Lia.
-  (* Even more interesting induction for this one! *)
-  Lemma dt_sane2s : forall t2 t1 td, dt_eq (t1 ~> t2 ~> td) t2 = false.
-  intros.
-  destruct (dt_eq _ _) eqn:?; eauto.
-  pose proof (size_eq_dt _ _ Heqb).
-  cbn [node_size] in H.
-  lia.
-  Qed.
-
-  Lemma dteq_neq_dteq'  : forall t1 t2, dt_eq t1 t2 = false -> exists p, dt_eq' (t1 ) t2 = right p.
-    induction t1.
-    -
-      destruct t2; eauto.
-      cbn; intros.
-      eapply beq_nat_false in H.
-      destruct (Nat.eq_dec t t0).
-      contradiction H; eauto.
-      intros; eexists; eauto.
-      cbn.
-      intros; eexists; eauto.
-    -
-      intros.
-      cbn in *.
-      destruct t2; [eexists; eauto|].
-      eapply Bool.andb_false_iff in H.
-      destruct H.
-      specialize (IHt1_1 _ H).
-      destruct IHt1_1.
-      rewrite H0.
-      destruct (dt_eq' t1_2 t2_2).
-      destruct e.
-      cbn; eexists; eauto.
-      eexists; eauto.
-      specialize (IHt1_2 _ H).
-      destruct IHt1_2.
-      rewrite H0.
-      eexists; eauto.
-  Qed.
-
-  Lemma dt_sane'  : forall td t1, exists p, dt_eq' (t1 ~> td) td = right p.
-    intros.
-    eapply dteq_neq_dteq'.
-    eapply dt_sane.
-  Qed.
-  Lemma dt_sane2'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) td = right p.
-    intros.
-    eapply dteq_neq_dteq'.
-    eapply dt_sane2.
-  Qed.
- Lemma dt_sane2f'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) t1 = right p.
-    intros.
-    eapply dteq_neq_dteq'.
-    eapply dt_sane2f.
-  Qed.
- Lemma dt_sane2s'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) t2 = right p.
-    intros.
-    eapply dteq_neq_dteq'.
-    eapply dt_sane2s.
-  Qed.
-  Lemma dt_comm_right  : forall t1 t2 p, dt_eq' t1 t2 = right p -> exists p', dt_eq' t2 t1 = right p' .
-    induction t1.
-    - intros.
-    destruct t2.
-    cbn in *.
-    destruct (Nat.eq_dec t t0).
-    rewrite e.
-    destruct (Nat.eq_dec _ _).
-    inversion H.
-    contradiction n; eauto.
-    destruct (Nat.eq_dec _ _).
-    contradiction n; eauto.
-    eexists; eauto.
-    cbn in *.
-    eexists; eauto.
-    -
-      intros.
-      cbn in *.
-      destruct t2.
-      cbn.
-      eexists; eauto.
-      cbn.
-      destruct (dt_eq' t1_2 t2_2) eqn:?;
-      destruct (dt_eq' t1_1 t2_1) eqn:?.
-      subst.
-      cbn in H.
-      inversion H.
-      destruct e.
-      cbn in H.
-      specialize (IHt1_1 _ _ Heqs0).
-      destruct IHt1_1.
-      rewrite H0.
-      pose (@dt_eq'_refl t1_2).
-      destruct e.
-      rewrite H1.
-      destruct x0.
-      cbn.
-      eexists; eauto.
-      specialize (IHt1_2 _ _ Heqs).
-      destruct IHt1_2.
-      rewrite H0.
-      eexists; eauto.
-      specialize (IHt1_2 _ _ Heqs).
-      destruct IHt1_2.
-      rewrite H0.
-      eexists; eauto.
-  Qed.
-
-
-  Lemma atom_correct : forall {t t' st} (f1 : Formula t) n eq,
-    eqf f1 (Atom1 n {|T:= t'; state := st|} eq) = true ->
-    exists st' eq', f1 = Atom1 n {| T:= t; state := st'|} eq'.
-    induction f1; intros; cbn in H; try inversion H.
-    destruct t0.
-    cbn in *.
-    destruct (dt_eq' T0 t').
-    eapply Pos.eqb_eq in H; eauto.
-    rewrite <- H.
-    eexists; eexists; eauto.
-    inversion H.
-  Qed.
-
-  Lemma lookup_update {t} (f : Formula t) {old_id2s} :
-  forall e n (eid0 : eclass_id),
+  Lemma type_preserved : forall {t1}  (f1 : term t1) {t2 t} (f g : term t)
+        (f2 : term t2) e n0 n1 n2,
       invariant_egraph e ->
-      lookup e (EAtom1 n) = None ->
-      lookupF f {| max_allocated := max_allocated e + 1;
-                   uf := uf e;
-                   n2id := add_enode (n2id e) (EAtom1 n) (max_allocated e);
-                   id2s := old_id2s |} = Some eid0 ->
-      lookupF f e = Some eid0 \/
-      exists st eq, eqf f (Atom1 n {| T:= t; state := st |} eq) = true.
-    induction f; cbn.
-       2:{
-         intros.
-         cbn.
-         unfold add_enode.
-         cbn.
-         destruct t0.
-         cbn in *.
-         pose proof (@dt_eq'_refl T0).
-         destruct H2.
-         intros.
-         (* rewrite H2. *)
-         unfold lookup in H1.
-         simpl in H1.
-         destruct H.
-         unfold lookup, Enodes.lookup, lookup' in H0, nobody_outside0, H1.
-         unfold add_enode, Enodes.lookup, lookup' in H1.
-         destruct (n2id e0) eqn:?.
-         simpl in H0.
-         destruct ((n =?  n0)%positive) eqn:?.
-         {
-           pose (@Pos.eqb_eq n n0).
-           destruct i.
-           specialize (H Heqb).
-           rewrite H in *.
-           destruct (PTree.get _ _ ) eqn:? in H0.
-           inversion H0.
-           rewrite Heqo in H1.
-           rewrite PTree.gss in H1.
-           rewrite H2.
-           eauto.
-         }
-         {
-         pose (@Pos.eqb_neq n n0).
-         destruct i.
-         specialize (H Heqb).
-         destruct (PTree.get _ _ ) eqn:? in H0.
-         inversion H0.
-         rewrite Heqo in H1.
-         rewrite PTree.gso in H1; eauto.
-         specialize (nobody_outside0 (EAtom1 n) eid0 ).
-         cbn in nobody_outside0.
-         specialize (nobody_outside0 H1).
-         destruct (PTree.get n t) eqn:?.
-         2:{ inversion H1. }
-         inversion H1.
-         left.
-         unfold lookup, Enodes.lookup, lookup'.
-         rewrite Heqm.
-         simpl.
-         rewrite Heqo0.
-         eauto. 
-       }
-       }
-       {
-          intros.
-          destruct (lookupF f1 _) eqn:? in H1.
-          destruct (lookupF f2 _)  eqn :? in H1.
-          specialize (IHf1 _ _ _ H H0 Heqo).
-          specialize (IHf2 _ _ _ H H0 Heqo0).
-          destruct IHf1.
-        
-          2:{
-            cleanup'.
-            pose proof (eq_preserve_type _ _ H2).
-            subst.
-            pose proof (@atom_correct).
-            specialize (H4) with (1:= H2).
-            cleanup'.
-            subst.
-            cbn in Heqo.
-            unfold lookup, Enodes.lookup, lookup' in Heqo.
-            cbn in Heqo.
-            cbn .
-            rewrite H0.
-            simpl in *.
-            unfold add_enode in *.
-            destruct (n2id e) eqn:?.
-
-            unfold lookup, Enodes.lookup, lookup' in *.
-            destruct (PTree.get _ _) eqn:? in Heqo.
-            rewrite Heqo1 in *.
-            simpl in H1.
-            rewrite Heqm in H0.
-            simpl in H0.
-            rewrite Heqo1 in H0.
-            inversion H0.
-            simpl in*.
-            rewrite Heqo1 in *.
-            simpl in*.
-            rewrite PTree.gss in Heqo.
-            simpl in Heqo.
-            inversion Heqo.
-            destruct H.
-     
-            unfold lookup in no_args_eapp1_outside0.
-            simpl in no_args_eapp1_outside0.
-            specialize (no_args_eapp1_outside0 eid0 e0 e1).
-            unfold Enodes.lookup, lookup' in H1, no_args_eapp1_outside0.
-            rewrite Heqm in no_args_eapp1_outside0.
-            specialize (no_args_eapp1_outside0 H1).
-            subst.
-            cleanup'.
-            unfold find in H.
-            cbn in H.
-            unfold classIsCanonical, find in uf_id_outside0.
-            erewrite (uf_id_outside0 (max_allocated e)) in H.
-            erewrite uf_id_outside0 in H.
-            cbn in *.
-            lia.
-            lia.
-            lia.
-          }
-          rewrite H2.
-          destruct IHf2.
-          2:{
-            cleanup'.
-            pose proof (eq_preserve_type _ _ H3).
-            subst.
-            pose proof (@atom_correct).
-            specialize (H5) with (1:= H3).
-            cleanup'.
-            subst.
-            cbn in Heqo.
-            cbn in *.
-            unfold lookup, Enodes.lookup, lookup' in *.
-            cbn in Heqo.
-            cbn .
-            simpl in *.
-            clear H3.
-            unfold add_enode in *.
-            destruct (n2id e) eqn:?.
-
-            unfold lookup, Enodes.lookup, lookup' in *.
-            destruct (PTree.get _ _) eqn:? in H0.
-            rewrite Heqo1 in *.
-            simpl in *.
-            inversion H0.
-       
-            simpl in*.
-            rewrite Heqo1 in *.
-            simpl in*.
-
-            rewrite PTree.gss in Heqo0.
-            simpl in Heqo0.
-            inversion Heqo0.
-            destruct H.
-            unfold lookup in no_args_eapp1_outside0.
-            simpl in no_args_eapp1_outside0.
-            specialize (no_args_eapp1_outside0 eid0 e0 e1).
-            unfold Enodes.lookup, lookup' in H1, no_args_eapp1_outside0.
-            rewrite Heqm in no_args_eapp1_outside0.
-            specialize (no_args_eapp1_outside0 H1).
-            subst.
-            cleanup'.
-            unfold find in H3.
-            cbn in H3.
-            unfold classIsCanonical, find in uf_id_outside0.
-            erewrite (uf_id_outside0 (max_allocated e)) in H3.
-            erewrite uf_id_outside0 in H3.
-            cbn in *.
-            lia.
-            lia.
-            lia.
-          }
-          rewrite H3.
-          left.
-          unfold add_enode,lookup, Enodes.lookup, lookup' in *.
-          cbn in *.
-          destruct (n2id e).
-            unfold lookup, Enodes.lookup, lookup' in *.
-            destruct (PTree.get _ _) eqn:? in H0.
-            rewrite Heqo1 in *.
-            simpl in *.
-            inversion H0.
-          rewrite Heqo1 in *.
-          eauto.
-          inversion H1.
-          inversion H1.
-       }
-       Qed. 
-
-  Lemma lookup_add_not_there : forall {t} (g : Formula t) e node i {new_id2s},
-    invariant_egraph e ->
-    lookup e node = None ->
-    lookupF g e = Some i ->
-    lookupF g {| max_allocated := max_allocated e + 1;
-                 uf := uf e;
-                 n2id := add_enode (n2id e) (canonicalize e node) (max_allocated e);
-                 id2s := new_id2s |} =
-    Some i.
-    induction g.
-    {
-      intros.
-      cbn in *.
-      repeat auto_specialize.
-      destruct (lookupF _ _) eqn:? in H1.
-      2:{ inversion H1. }
-      destruct (lookupF _ _) eqn:? in H1.
-      2:{ inversion H1. }
-      repeat auto_specialize.
-      rewrite IHg1.
-      rewrite IHg2.
-
-      unfold lookup, Enodes.lookup, lookup'  in *.
-      simpl.
-      destruct node;eauto.
-      (* destruct (_&&_)eqn:?; eauto. *)
-      (* eapply Bool.andb_true_iff in Heqb. *)
-      cleanup'.
-      pose proof (@lookupF_canonical _ H _ _ _ Heqo).
-      pose proof (@lookupF_canonical _ H _ _ _ Heqo0).
-      unfold add_enode.
-      simpl in *.
-      destruct (n2id e) eqn:?.
-      rewrite H2 in H1.
-      simpl in *.
-      rewrite H3 in H1.
-      rewrite H2.
-      rewrite H3.
-
-        unfold lookup, Enodes.lookup, lookup' in *.
-      simpl in *.
-        destruct (PTree.get _ _) eqn:? in H1  .
-        2:{ inversion H1. }
-        destruct (PTree.get _ _) eqn:? in H1  .
-        2:{ inversion H1. }
-      assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
-      destruct H4. 
-      2:{
-        simpl in *.
-        unfold lookup, Enodes.lookup, lookup' in *.
-
-        destruct (PTree.get _ _) eqn:? in H0  .
-        rewrite Heqo3.
-        destruct (PTree.get _ _) eqn:? in H0  .
-        rewrite Heqo4.
-        rewrite Heqo1.
-        rewrite Heqo2.
-        eauto.
-        rewrite Heqo4.
-      erewrite PTree.gso;
-      eauto.
-      simpl in *.
-      setoid_rewrite Heqo1.
-      setoid_rewrite Heqo2.
-      eauto.
-      rewrite Heqo3.
-      erewrite PTree.gso;
-      eauto.
-      setoid_rewrite Heqo1.
-      setoid_rewrite Heqo2.
-      eauto.
-      }
-
-      subst.
-      rewrite Heqo1 in *.
-      destruct (PTree.get _ _) eqn:? in H0  .
-      inversion H0.
-      rewrite Heqo3.
-
-      erewrite PTree.gss.
-      simpl in *.
-      (* rewrite H2 iddn H0. *)
-      assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
-      destruct H4.
-      2:{
-        erewrite PTree.gso; eauto.
-        rewrite Heqo2.
-        eauto.
-      }
-      subst.
-      rewrite PTree.gss.
-      simpl.
-      inversion H1.
-      2:{  simpl in *.
-      destruct (n2id e) eqn:?.
-      unfold add_enode.
-      unfold Enodes.lookup, lookup'.
-      destruct (PTree.get _ _) eqn:? in H0  .
-      inversion H0.
-      rewrite Heqo1 in *.
-      eauto.  
-      }
-      (* Contradiction *)
-      congruence.
-    }
-    {
-      intros.
-      cbn in *.
-      unfold add_enode.
-      unfold lookup, Enodes.lookup, lookup'  in *.
-      cbn in *.
-      destruct (n2id e0) eqn:?.
-      destruct node; eauto.
-      cbn in *.
-      destruct (PTree.get _ _) eqn:? in H0.
-      rewrite Heqo.
-      destruct (PTree.get _ _) eqn:? in H0.
-      inversion H0.
-      rewrite Heqo0.
-      eauto.
-      rewrite Heqo.
-      eauto.
-      simpl.
-      destruct (n0 =? n) eqn:?; eauto.
-      eapply Pos.eqb_eq in Heqb.
-      subst.
-
-      destruct (PTree.get _ _) eqn:? in H1.
-      2:{ inversion H1. }
-      setoid_rewrite Heqo.
-      setoid_rewrite Heqo.
-      eauto.
-    
-      eapply Pos.eqb_neq in Heqb.
-      destruct (PTree.get n0 _) eqn:? .
-      destruct (PTree.get _ _) eqn:? .
-      eauto.
-      inversion H1.
-      rewrite PTree.gso.
-      eauto.
-      eauto.
-    }
-    Qed. 
-
-  (* On veut dire que si lookup = max_allocated, alors f2 est EAtom1 *)
-  Lemma found_high_in_updated : forall {t} (g : Formula t) e node i {new_id2s},
-    invariant_egraph e ->
-    lookupF g {| max_allocated := max_allocated e + 1;
-                 uf := uf e;
-                 n2id := add_enode (n2id e) (canonicalize e node) (max_allocated e);
-                 id2s := new_id2s |} =
-    Some i ->
-    (i < max_allocated e /\ lookupF g e = Some i ) \/
-    (i = max_allocated e /\
-    match g with
-    | Atom1 n t eq => EAtom1 n = canonicalize e node
-    | App1 f1 f2  =>
-      exists e1 e2,
-        lookupF  f1 e= Some e1 /\
-        lookupF  f2 e= Some e2 /\
-        EApp1 e1 e2 = canonicalize e node
-    end).
-    induction g.
-    {
-      intros e node i new_id2s inv.
-      simpl.
-      intros.
-      destruct (lookupF _ _) eqn:? in H.
-      2:{ inversion H. }
-      destruct (lookupF _ _) eqn:? in H.
-      2:{ inversion H. }
-      unfold add_enode in H.
-      repeat auto_specialize.
-      destruct IHg1.
-      destruct IHg2.
-      {
-        cleanup'.
-        rewrite H3, H2.
-        unfold lookup, Enodes.lookup, lookup' in *.
-        simpl in *.
-        destruct (n2id e) eqn:?.
-        pose proof (@lookupF_canonical _ inv _ _ _ H3) as can_n1.
-        pose proof (@lookupF_canonical _ inv _ _ _ H2) as can_n0.
-        rewrite can_n0, can_n1 in *.
-        cleanup'.
-        destruct node eqn:?.
-        2:{ left. split; eauto. simpl in *. destruct inv. 
-        
-        unfold lookup, Enodes.lookup, lookup' in nobody_outside0.
-        erewrite Heqm in nobody_outside0.
-        specialize (nobody_outside0 (EApp1 e0 e1) i).
-        simpl in nobody_outside0.
-        rewrite can_n0 in nobody_outside0.
-        rewrite can_n1 in nobody_outside0.
-        destruct (PTree.get _ _) in H.
-        specialize (nobody_outside0 H).
-        eauto.
-        eauto.
-        simpl in *.
-        destruct (PTree.get _ _) in H.
-        eauto.
-        eauto.
-        }
-        simpl in *.
-        destruct (PTree.get) eqn:? in H.
-        destruct (PTree.get) eqn:? in H.
-        destruct (PTree.get) eqn:? in H.
-        rewrite Heqo3.
-        destruct (PTree.get) eqn:? in H.
-        2:{ inversion H. }
-        2:{ inversion H. }
-        rewrite Heqo4.
-        { left.
-        split;eauto.
-        destruct inv.
-        unfold lookup, Enodes.lookup, lookup' in nobody_outside0.
-        rewrite Heqm in nobody_outside0.
-        specialize (nobody_outside0  (EApp1 e0 e1) i).
-        eapply nobody_outside0.
-        simpl.
-        rewrite can_n1.
-        rewrite can_n0.
-        rewrite Heqo3.
-        rewrite Heqo4.
-        congruence.
-        }
-        {
-        assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
-        destruct H4.
-        {
-          rewrite H4 in *.
-          rewrite PTree.gss in H.
-        assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
-        destruct H5.
-        {
-          rewrite <- H5 in *.
-          rewrite PTree.gss in H.
-          simpl in *.
-          rewrite Heqo1.
-          rewrite Heqo2.
-          right.
-          split;eauto.
-          destruct inv.
-          erewrite uf_id_outside0 in H; try lia.
-          congruence.
-        }
-        {
-          pose (nobody_outside e inv).
-          unfold lookup, Enodes.lookup, lookup' in l.
-          rewrite Heqm in l.
-          specialize (l (EApp1 e2 e1) i).
-          simpl in l.
-          rewrite PTree.gso in H; eauto.
-          simpl in *.
-          rewrite Heqo1; eauto.
-          destruct (PTree.get) eqn:? in H.
-          rewrite Heqo3.
-          left; split; eauto.
-          subst.
-          inversion H.
-          subst.
-          clear H.
-          rewrite Heqo1 in l.
-          rewrite can_n0 in l.
-          rewrite Heqo3 in l.
-          intuition lia.
-          inversion H.
-        }
-        }
-        {
-          rewrite PTree.gso in H; eauto.
-          destruct (PTree.get) eqn:? in H.
-          2:{ inversion H. }
-          setoid_rewrite Heqo3.
-          rewrite H.
-          left.
-          split ;eauto.
-          pose (nobody_outside e inv).
-          unfold lookup, Enodes.lookup, lookup' in l.
-          rewrite Heqm in l.
-          specialize (l (EApp1 e0 e1) i).
-          simpl in l.
-          rewrite can_n1 in l.
-          setoid_rewrite Heqo3 in l.
-          rewrite can_n0 in l.
-          specialize (l H).
-          eauto.
-        }
-        }
-        {
-        assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
-        destruct H4.
-        {
-          rewrite H4 in *.
-          rewrite PTree.gss in H.
-        assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
-        destruct H5.
-        {
-          rewrite <- H5 in *.
-          rewrite PTree.gss in H.
-          simpl in *.
-          rewrite Heqo1.
-          right.
-          split;eauto.
-          destruct inv.
-          erewrite uf_id_outside0 in H; try lia.
-          congruence.
-        }
-        {
-          rewrite PTree.gso in H; eauto.
-          simpl in *.
-          rewrite Heqo1; eauto.
-          inversion H.
-        }
-        }
-        {
-          rewrite PTree.gso in H; eauto.
-          destruct (PTree.get) eqn:? in H.
-          setoid_rewrite Heqo2.
-          rewrite H.
-          left.
-          split; eauto.
-          pose (nobody_outside e inv).
-          unfold lookup, Enodes.lookup, lookup' in l.
-          rewrite Heqm in l.
-          specialize (l (EApp1 e0 e1) i).
-          simpl in l.
-          rewrite can_n1 in l.
-          setoid_rewrite Heqo2 in l.
-          rewrite can_n0 in l.
-          specialize (l H).
-          eauto.
-          inversion H.
-        }
-      }
-    }
-    {
-      cleanup'.
-      subst.
-      destruct node; simpl in *.
-      2:{
-        pose (no_args_eapp1_outside e inv i e0 (max_allocated e)).
-        unfold lookup, Enodes.lookup, lookup' in *.
-        simpl in *.
-        destruct (n2id e) eqn:? in H.
-        rewrite Heqm in a.
-        destruct (PTree.get) eqn:? in H.
-        specialize (a H).
-        cleanup'.
-        erewrite (uf_id_outside) in H4; try intuition lia.
-        specialize (a H).
-        cleanup'.
-        erewrite (uf_id_outside) in H4; try intuition lia.
-      }
-      {
-        pose (no_args_eapp1_outside e inv i e0 (max_allocated e)).
-        unfold lookup, Enodes.lookup, lookup' in *.
-        simpl in *.
-        destruct (n2id e) eqn:? in H.
-        rewrite Heqm in a.
-        destruct (PTree.get) eqn:? in H.
-        destruct (PTree.get) eqn:? in H.
-        specialize (a H).
-        cleanup'.
-        erewrite (uf_id_outside) in H4; try intuition lia.
-        assert (find (uf e) e0 = find (uf e) e1 \/ find (uf e) e0 <> find (uf e) e1) by lia.
-        destruct H1.
-        {
-          rewrite H1 in *; clear H1.
-          rewrite PTree.gss in H.
-          rewrite Heqo1 in a.
-          assert (find (uf e) (max_allocated e) = find (uf e) e2 \/ find (uf e) (max_allocated e) <> find (uf e) e2) by lia.
-          destruct H1.
-          {
-            (* inconsistent *)
-            exfalso.
-            rewrite H1 in H.
-            rewrite PTree.gss in H.
-            inversion H.
-            clear a.
-            subst.
-            rewrite <- H1 in *.
-            rewrite Heqm in Heqo0.
-            clear H1.
-            unfold add_enode,Enodes.lookup, lookup' in Heqo0.
-            rewrite Heqo1 in Heqo0.
-            rewrite Heqo2 in Heqo0.
-            clear H.
-            destruct g2; cleanup'; simpl in *.
-            admit.
-            admit.
-        }
-        {
-          rewrite PTree.gso in H.
-          specialize (a H).
-          cleanup'.
-          erewrite (uf_id_outside) in H5; try intuition lia.
-          eauto.
-        }
-        (* assert (find (uf e) e0 = find (uf e) e1 \/ find (uf e) e0 <> find (uf e) e1) by lia.
-        destruct H1.
-        {
-          rewrite H1 in *; clear H1.
-          rewrite PTree.gss in H.
-          admit.
-        }
-        {
-          rewrite PTree.gso in H.
-          specialize (a H).
-          cleanup'.
-          erewrite (uf_id_outside) in H5; try intuition lia.
-          eauto.
-        } *)
-       }
-       admit.
-       admit.
-    }
-  }
-  admit.
-    Admitted.
-
-  Require Import Eqdep.
-  Lemma add_atom_safe : forall {t} n eq e ,
-    invariant_egraph e ->
-    let '(newe, _) := add_formula e (@Atom1 _ _ n t eq) in
-    invariant_egraph newe.
-    cbn.
-    intros.
-    destruct (lookup e (EAtom1 n )) eqn:?; eauto.
-    econstructor.
-    intros.
-    pose proof @lookup_update as updf.
-    specialize updf with (1:= H).
-    specialize updf with (1:= Heqo).
-    specialize updf with (1:= H0).
-    pose proof @lookup_update as updg.
-    specialize updg with (1:= H).
-    specialize updg with (1:= Heqo).
-    specialize updg with (1:= H1).
-    destruct updf.
-    {
-      destruct updg.
-      eapply H; eauto.
-      cleanup'.
-      pose H3.
-      eapply eq_preserve_type in e0.
-      subst.
-      pose proof (@atom_correct) as atomg.
-      specialize atomg with (1:= H3).
-      cleanup'.
-      subst.
-      cbn in *.
-      (* That should be absurd: eid = max allocated *)
-      {
-        unfold lookup,  Enodes.lookup, lookup' in H1, Heqo.
-        simpl in H1,Heqo.
-        unfold add_enode in H1.
-        unfold lookup,  Enodes.lookup, lookup' in H1.
-        destruct (n2id e) eqn:?.
-        destruct (PTree.get n t1) eqn:? in H1.
-        inversion Heqo.
-        congruence.
-        rewrite PTree.gss in H1.
-        inversion H1.
-        pose proof (nobody_lookupF_outside e H _ _ _ H2).
-        destruct H.
-        erewrite uf_id_outside0 in H5; try lia.
-      }
-    }
-    {
-      cleanup'.
-      pose H2.
-      eapply eq_preserve_type in e0.
-      subst.
-      pose proof (@atom_correct) as atomf.
-      specialize atomf with (1:= H2).
-      cleanup'.
-      (* destruct atomf. *)
-      subst.
-      cbn in H0.
-      unfold add_enode in H0.
-      unfold lookup, Enodes.lookup, lookup' in H0, Heqo.
-      cbn in H0, Heqo.
-      destruct (n2id e) eqn:?.
-      destruct (PTree.get n t1) eqn:? in H0.
-      {
-        rewrite Heqo0 in *.
-        inversion H0.
-        destruct updg.
-        pose proof (nobody_lookupF_outside e H).
-        specialize H5 with (1:= H3).
-        subst.
-        cbn in *.
-        inversion Heqo.
-        cleanup'.
-        pose proof (@atom_correct) as atomg.
-        specialize atomg with (1:= H3).
-        cleanup'.
-        subst.
-        simpl.
-        cbn in *.
-        rewrite x2 in x6.
-        inverseS x6.
-        eauto.
-      }
-      {
-        rewrite Heqo0 in *.
-        rewrite PTree.gss in H0.
-        inversion H0.
-        destruct updg.
-        pose proof (nobody_lookupF_outside e H).
-        specialize H5 with (1:= H3).
-        erewrite uf_id_outside in H4; eauto; lia.
-        cleanup'.
-        pose proof (@atom_correct) as atomg.
-        specialize atomg with (1:= H3).
-        cleanup'.
-        subst.
-        simpl.
-        cbn in *.
-        rewrite x2 in x6.
-        inverseS x6.
-        eauto.
-      }
-    }
-    {
-      cbn.
-      intros.
-      pose proof (nobody_outside e H).
-      unfold add_enode, lookup, Enodes.lookup, lookup' in H0,H1, Heqo.
-      simpl in H0.
-      subst.
-      destruct (n2id e) eqn:?.
-      destruct (PTree.get _ _) eqn:? in H0.
-      { 
-        simpl in *.
-        cbn in H0.
-        specialize (H1 a eid).
-        destruct a; simpl in *.
-        specialize H1 with (1:=H0).
-        lia.
-        specialize H1 with (1:=H0).
-        lia.
-      }
-      {
-        simpl in *.
-        cbn in H0.
-        specialize (H1 a eid).
-        destruct a; simpl in *.
-        specialize H1 with (1:=H0).
-        lia.
-        rewrite Heqo0 in *.
-        assert (n0 = n \/ n0 <> n) by lia .
-        destruct H2.
-        {
-          subst.
-          rewrite PTree.gss in H0.
-          inversion H0.
-          erewrite uf_id_outside; eauto;lia.
-        }
-        {
-          rewrite PTree.gso in H0;
-          intuition lia.
-        }
-      }
-    }
-    {
-      cbn.
-      intros.
-      pose proof (no_args_eapp1_outside e H).
-      unfold add_enode, lookup, Enodes.lookup, lookup' in H0,H1, Heqo.
-      simpl in H0.
-      subst.
-      destruct (n2id e) eqn:?.
-      simpl in *.
-      destruct (PTree.get _ _) eqn:? in H0.
-      { 
-        simpl in *.
-        cbn in H0.
-        specialize (H1 eid e1 e2).
-        specialize H1 with (1:=H0).
-        lia.
-      }
-      {
-        simpl in *.
-        cbn in H0.
-        specialize (H1 eid e1 e2).
-        specialize H1 with (1:=H0).
-        lia.
-      }
-    }
-    {
-      unfold n2idCanonical.
-      cbn.
-      unfold lookup, add_enode, Enodes.lookup, lookup' in *.
-      destruct H.
-        unfold n2idCanonical in sanely_assigned_lookup0.
-      unfold lookup, add_enode, Enodes.lookup, lookup' in sanely_assigned_lookup0.
-      intros.
-      unfold classIsCanonical.
-      cbn.
-      {
-        subst.
-        cleanup'.
-        destruct (n2id e) eqn:?.
-        destruct f eqn:?;
-        try auto_specialize;
-        unfold classIsCanonical in sanely_assigned_lookup0;
-        eauto.
-        {
-          simpl in *.
-          specialize (sanely_assigned_lookup0 f c).
-          subst f.
-          simpl in *.
-          destruct (PTree.get _ _) eqn:? in H.
-          {
-            rewrite Heqo0 in *.
-            inversion Heqo.
-          }
-          clear Heqo.
-          destruct (PTree.get _ _) eqn:? in H.
-          {
-          destruct (PTree.get _ _) eqn:? in H.
-          rewrite Heqo in *.
-          rewrite Heqo1 in *.
-          specialize (sanely_assigned_lookup0 H).
-          eauto.
-          inversion H.
-          }
-          inversion H.
-        }
-        {
-          simpl in *.
-          specialize (sanely_assigned_lookup0 f c).
-          subst f.
-          simpl in *.
-          destruct (PTree.get _ _) eqn:? in H.
-          {
-            rewrite Heqo0 in *.
-            inversion Heqo.
-          }
-          clear Heqo.
-          assert (n = n0 \/  n<>n0) by lia.
-          destruct H0.
-          {
-            subst.
-            rewrite PTree.gss in H.
-            simpl in *.
-            inversion H.
-            erewrite uf_id_outside0; try lia.
-            erewrite uf_id_outside0; try lia.
-          }
-          {
-            erewrite PTree.gso in H; eauto.
-          }
-        }
-      }
-    }
-    {
-      cbn.
-      intros.
-      destruct H.
-      eapply uf_id_outside0.
-      lia.
-    }
-    {
-      intros.
-      cbn in *.
-      change (lookupF f1
-                {|
-                  max_allocated := max_allocated e + 1;
-                  uf := uf e;
-                  n2id := add_enode (n2id e) (canonicalize e (EAtom1 n)) (max_allocated e);
-                  id2s :=
-                    PTree.set (max_allocated e)
-                      (max_allocated e, T t,
-                      (PTree.Nodes (PTree.set0 n n),
-                      PTree.empty (PTree.t (eclass_id * eclass_id)))) 
-                      (id2s e)
-                |} = Some c
-               ) in H0.
-      change ( lookupF f2
-       {|
-         max_allocated := max_allocated e + 1;
-         uf := uf e;
-         n2id := add_enode (n2id e) (canonicalize e (EAtom1 n)) (max_allocated e);
-         id2s :=
-           PTree.set (max_allocated e)
-             (max_allocated e, T t,
-             (PTree.Nodes (PTree.set0 n n),
-             PTree.empty (PTree.t (eclass_id * eclass_id)))) 
-             (id2s e)
-       |} = Some c) in H1.
-      pose proof (@found_high_in_updated _ _ _ _ _ _ H H0).
-      pose proof (@found_high_in_updated _ _ _ _ _ _ H H1).
-      destruct H2; destruct H3; cleanup'; try lia.
-      eapply wt_egraph; eauto.
-      {
-        destruct f1; destruct f2; cleanup';
-        cbn in *.
-        inversion H6.
-        inversion H6.
-        inversion H6.
-        inversion H5; inversion H4.
-        subst.
-        congruence.
-      } 
-    }
-    {
-        intros.
-        destruct H.
-        simpl in *.
-        assert ( c < max_allocated e \/ c = max_allocated e) by  lia.
-        destruct H.
-        erewrite wf_uf0; lia.
-        specialize (uf_id_outside0 c).
-        rewrite uf_id_outside0.
-        lia.
-        lia.
-    }
-    Qed.
-
- (* Require Import Coq.Program.Equality. *)
-
-  Ltac cleanup := cbn in *;intros;
-  repeat match goal with
-  | H: _ /\ _ |- _ => destruct H
-  | H: _ <-> _ |- _ => destruct H
-  | H: exists _, _  |- _ => destruct H
-  | H: True  |- _ => clear H
-  | H : ?a = ?b, H' : ?a = ?b |- _ => clear H'
-  | H : ?P, H' : ?P |- _ =>
-    let t := type of P in
-    assert_succeeds(constr_eq t Prop);
-    clear H'
-  end.
-
-  Lemma lookupF_eqf : forall {t} (f g : Formula t) e i,
-    eqf f g = true ->
-    lookupF f e = Some i ->
-    lookupF g e = Some i.
-    induction f.
-    -
-     destruct g; cbn.
-      {
-        intros.
-        destruct (lookupF _ _) eqn:? in H0.
-        2:{ inversion H0. }
-        destruct (lookupF _ _) eqn:? in H0.
-        2:{ inversion H0. }
-        eapply Bool.andb_true_iff in H.
-        cleanup.
-        pose H.
-        eapply eq_preserve_type in e2.
-        inversion e2.
-        subst.
-        repeat auto_specialize.
-        rewrite IHf1.
-        rewrite IHf2.
-        eauto.
-      }
-      { intros.  inversion H.  }
-    -
-     destruct g; cbn.
-      (* { intros.  inversion H. } *)
-      { intros.  inversion H.  }
-      {
-        intros.
-        destruct t0.
-        destruct t1.
-        cbn in *.
-        destruct (dt_eq' T0 T1) eqn:?; subst.
-        eapply Pos.eqb_eq in H.
-        subst.
-        eauto.
-        inversion H.
-      }
-  Qed.
-
-  Lemma lookup_update_app1 :
-  forall {t'} (f'  : Formula t') {t1 t3}
-   newe
-   (f1 : Formula t3) (f2 : Formula t1)
-   e1 e3
-   eid0 {new_id2s},
-    (* lookupF (App2 f1 f2 f3) newe = None ->  *)
-    lookupF f1 newe = Some e1 ->
-    lookupF f2 newe = Some e3 ->
-    invariant_egraph newe ->
-    lookupF f' {| max_allocated := max_allocated newe + 1;
-                 uf := uf newe;
-                 n2id :=  add_enode (n2id newe) (EApp1 e1 e3) (max_allocated newe);
-                 id2s := new_id2s |}
-    = Some eid0 ->
-    lookupF f' newe = Some eid0 \/
-    (exists  (f'1 : Formula (t1 ~> t')) (f'2 : Formula t1)  ,
-      lookupF f'1 newe = Some e1 /\
-      lookupF f'2 newe = Some e3 /\
-      eqf f' (App1 f'1 f'2) = true /\
-      eid0 = max_allocated newe).
+      wf_term typemap constmap [] f = true ->
+      wf_term typemap constmap [] g = true ->
+      wf_term typemap constmap [] f1 = true ->
+      wf_term typemap constmap [] f2 = true ->
+      lookup_term f e = Some n0 ->
+      lookup_term g e = Some n1 ->
+      lookup_term f1 (merge e n0 n1) = Some n2 ->
+      lookup_term f2 (merge e n0 n1) = Some n2 ->
+      t1 = t2.
       Admitted.
-      (* induction f'.
-      2:{
-        intros.
-        cbn in *.
-        left.
-        unfold lookup.
-        unfold add_enode in H2.
-        cbn in *; eauto.
-      }
-      {
-        intros.
-        cbn in H2.
-        specialize (IHf'1) with (1:= H).
-        specialize (IHf'1) with (1:= H0).
-        specialize (IHf'1) with (1:= H1).
-        (* specialize (IHf'1) with (1:= H2). *)
-        specialize (IHf'2) with (1:= H).
-        specialize (IHf'2) with (1:= H0).
-        specialize (IHf'2) with (1:= H1).
-        (* specialize (IHf'2) with (1:= H2). *)
-        repeat auto_specialize.
-        cbn.
-        destruct (lookupF f'1 _) eqn:? in H2.
-        2:{
-          inversion H2.
-        }
-        destruct (lookupF f'2 _) eqn:? in H2.
-        2:{
-          inversion H2.
-        }
-        repeat auto_specialize.
-        destruct IHf'1.
-        rewrite H3.
-        destruct IHf'2.
-        rewrite H4.
-        {
-          unfold update_map in H2.
-          cbn in H2.
-          subst.
-          destruct (_&&_) eqn:? in H2.
-          cbn in H2.
-          pose proof (lookupF_canonical newe ) as canonicalLookup.
-          auto_specialize.
-          destruct H1.
-          eapply Bool.andb_true_iff in Heqb.
-          cleanup'.
-          eapply Nat.eqb_eq in H1.
-          eapply Nat.eqb_eq in H5.
-          pose (canonicalLookup _ f1 e1) as e1_c.
-          pose (canonicalLookup _ f2 e3) as e3_c.
-          pose (canonicalLookup _ f'1 n) as e_c.
-          pose (canonicalLookup _ f'2 n0) as e0_c.
-          do 4 auto_specialize.
-          rewrite e1_c in H1.
-          rewrite e_c in H1.
-          rewrite e3_c in H5.
-          rewrite e0_c in H5.
-          subst.
-          pose proof (wt_egraph0 _ _ _ _ _ H H3) as luf1.
-          pose proof (wt_egraph0 _ _ _ _ _ H0 H4) as luf2.
-          cleanup'.
-          subst.
-          right.
-          eexists; eexists.
-          split.
-          exact H3.
-          split.
-          exact H4.
-          split.
-          rewrite !eqf_refl.
-          eauto.
-          inversion H2.
-          eauto.
-          eauto.
-        }
-        {
-          cleanup.
-          rename H7 into reskj.
-          unfold update_map in H2.
-          subst.
-          match type of Heqo0 with
-          | lookupF ?a ?b = Some ?c =>
-            assert (lookupF (App1 x x0) b = Some c)
-          end.
-          eapply lookupF_eqf; eauto.
-          destruct (_ && _) eqn:? in H2.
-          (* Destruction of H4 leads to one similar case for the false branch.  *)
-          2:{
-            destruct H1.
-            specialize no_args_eapp1_outside0 with (1:= H2).
-            cleanup'.
-            unfold classIsCanonical in uf_id_outside0.
-            unfold find in H8, uf_id_outside0; subst; cbn in *.
-            erewrite uf_id_outside0 with (a := max_allocated newe) in H8; lia.
-          }
-          pose proof (lookupF_canonical newe ) as canonicalLookup.
-          specialize (canonicalLookup H1).
-          eapply Bool.andb_true_iff in Heqb.
-          destruct Heqb.
-          eapply Nat.eqb_eq in H8, H9.
-          pose (canonicalLookup _ f2 e3) as e3_c.
-          auto_specialize.
-          rewrite e3_c in H9.
-          pose proof (nobody_lookupF_outside newe H1 _ _ _ H0).
-          destruct H1.
-          unfold classIsCanonical in uf_id_outside0.
-          unfold find in H9, uf_id_outside0.
-          erewrite uf_id_outside0 in H9; cbn; try lia.
-        }
-        {
-          cleanup.
-          rename H6 into reskj.
-          subst.
-          match type of Heqo with
-          | lookupF ?a ?b = Some ?c =>
-            assert (lookupF (App1 x x0) b = Some c)
-          end.
-          eapply lookupF_eqf; eauto.
-          destruct (_ && _) eqn:? in H2.
-          (* Destruction of H4 leads to one similar case for the false branch.  *)
-          2:{
-            destruct H1.
-            specialize no_args_eapp1_outside0 with (1:= H2).
-            cleanup'.
-            unfold classIsCanonical in uf_id_outside0.
-            unfold find in H1, uf_id_outside0; subst; cbn in *.
-            erewrite uf_id_outside0 with (a := max_allocated newe) in H1; lia.
-          }
-          pose proof (lookupF_canonical newe ) as canonicalLookup.
-          specialize (canonicalLookup H1).
-          eapply Bool.andb_true_iff in Heqb.
-          destruct Heqb.
-          eapply Nat.eqb_eq in H7, H8.
-          pose (canonicalLookup _ f1 e1) as e1_c.
-          auto_specialize.
-          rewrite e1_c in H7.
-          pose proof (nobody_lookupF_outside newe H1 _ _ _ H3).
-          destruct H1.
-          unfold classIsCanonical in uf_id_outside0.
-          unfold find in H7, uf_id_outside0.
-          erewrite uf_id_outside0 in H7; cbn; try lia.
-        }
-      }
-      Qed. *)
 
-
-  Lemma add_app1_safe: forall {t t1} e
-  (f1 : Formula (t1 ~> t))
-   (f2 : Formula t1)
-    e1 e3 {new_id2s},
+  Theorem merge_preserve : forall {t} (e : egraph) (f g : term t)
+    (wf_f : wf_term typemap constmap [] f = true)
+    (wf_g : wf_term typemap constmap [] g = true),
     invariant_egraph e ->
-    lookupF f1 e = Some e1 ->
-    lookupF f2 e = Some e3 ->
-    invariant_egraph
-      {| max_allocated := max_allocated e + 1;
-         uf := uf e;
-         n2id := add_enode (n2id e) (EApp1 e1 e3) (max_allocated e);
-         id2s := new_id2s |}.
-    Admitted.
-    (* intros.
-    econstructor.
-    intros.
-    pose proof @lookup_update_app1 as updf.
-    (* specialize updf with (1:= H3). *)
-    specialize updf with (1:= H0).
-    specialize updf with (1:= H1).
-    (* specialize updf with (1:= H2). *)
-    specialize updf with (1:= H).
-    specialize updf with (1:= H2).
-    pose proof @lookup_update_app1 as updg.
-    (* specialize updg with (1:= H3). *)
-    specialize updg with (1:= H0).
-    specialize updg with (1:= H1).
-    (* specialize updg with (1:= H2). *)
-    specialize updg with (1:= H).
-    specialize updg with (1:= H3).
-    destruct updf.
-    {
-      destruct updg.
-      eapply H; eauto.
-      cleanup'.
-      pose proof (nobody_lookupF_outside _ H) as nobody_outside0.
-      specialize (nobody_outside0) with (1:= H4).
-      lia.
-    }
-    {
-      cleanup'.
-      pose H6.
-      eapply eq_preserve_type in e0.
-      subst.
-      destruct updg.
-      {
-         pose proof (nobody_lookupF_outside _ H) as nobody_outside0.
-         specialize (nobody_outside0) with (1:= H7).
-         lia.
-      }
-      {
-        cleanup.
-        transitivity (interp_formula ctx (App1 x x0)).
-        eapply eq_correct.
-        eauto.
-        transitivity (interp_formula ctx (App1 x1 x2 )).
-        2:{
-          symmetry.
-          eapply eq_correct.
-          eauto.
-        }
-        simpl.
-        assert (interp_formula ctx x = interp_formula ctx x1).
-        eapply H; eauto.
-        assert (interp_formula ctx x0 = interp_formula ctx x2).
-        eapply H; eauto.
-        rewrite H11.
-        rewrite H12.
-        eauto.
-      }
-    }
-    {
-      cbn.
-      intros.
-      destruct a.
-      cbn in *.
-      destruct (_ && _) eqn:? in H2.
-      inversion H2; subst; lia.
-      destruct H.
-      repeat auto_specialize.
-      unfold find in no_args_eapp1_outside0.
-      cleanup'.
-      lia.
-      destruct H.
-      repeat auto_specialize.
-      lia.
-    }
-    {
-      unfold n2idCanonical.
-      cbn.
-      intros.
-
-      destruct (_ && _) eqn:?.
-      {
-        eapply Bool.andb_true_iff in Heqb.
-        cleanup'.
-        eapply Nat.eqb_eq in H4.
-        eapply Nat.eqb_eq in H3.
-        unfold find in *.
-        pose proof (@lookupF_canonical _ H  _ _ _ H0).
-        pose proof (@lookupF_canonical _ H  _ _ _ H1).
-        rewrite H5 in H3.
-        rewrite H6 in H4.
-        rewrite <- H3.
-        rewrite <- H4.
-        pose proof (nobody_lookupF_outside _ H).
-        split; erewrite H7; eauto; lia.
-      }
-      subst.
-      destruct H.
-      unfold n2idCanonical in sanely_assigned_lookup0.
-      cleanup'.
-      try auto_specialize;
-      unfold classIsCanonical in sanely_assigned_lookup0;
-      eauto.
-      specialize (no_args_eapp1_outside0 _ _ _ H2).
-      cleanup'.
-      rewrite H.
-      rewrite H3.
-      cbn; lia.
-    }
-    {
-      unfold n2idCanonical.
-      cbn.
-      intros.
-      destruct f.
-      destruct (_ && _) eqn:?.
-      {
-        inversion H2.
-        subst.
-        cbn.
-        destruct H.
-        specialize (uf_id_outside0 (max_allocated e)).
-        unfold classIsCanonical in *.
-        cbn in *.
-        unfold find in uf_id_outside0.
-        erewrite uf_id_outside0; try lia.
-      }
-      {
-        unfold classIsCanonical in *.
-        cbn in *.
-        destruct H.
-        unfold n2idCanonical in *.
-        specialize (sanely_assigned_lookup0 _ _ H2).
-        eauto.
-      }
-      {
-        unfold classIsCanonical in *.
-        cbn in *.
-        destruct H.
-        unfold n2idCanonical in *.
-        specialize (sanely_assigned_lookup0 _ _ H2).
-        eauto.
-      }
-    }
-    {
-      cbn.
-      intros.
-      destruct H.
-      eapply uf_id_outside0.
-      lia.
-    }
-    {
-      intros.
-      cbn in *.
-      pose proof (@found_high_in_updated _ _ _ _ _ _ H H2).
-      pose proof (@found_high_in_updated _ _ _ _ _ _ H H3).
-      destruct H4; destruct H5; cleanup'; try lia.
-      eapply wt_egraph; eauto.
-      {
-        destruct f0; destruct f3; cleanup';
-        cbn in *.
-        2:{ inversion H6. }
-        2:{ inversion H7. }
-        2:{ inversion H7. }
-        inversion H8; inversion H10.
-        subst.
-        destruct H.
-        pose proof (@wt_egraph0 _ _ _ _ _ H7 H5).
-        inversion H.
-        eauto.
-      }
-    }
-{
-        intros.
-        destruct H.
-        simpl in *.
-        assert ( c < max_allocated e \/ c = max_allocated e) by  lia.
-        destruct H.
-        erewrite wf_uf0; lia.
-        specialize (uf_id_outside0 c).
-        rewrite uf_id_outside0.
-        lia.
-        lia.
-    }
-    Qed. *)
-
-    (* Another exam exercise:
-     In this case we need to be careful to not make a statement too general
-     that's something to have the student look for as well. *)
-  Theorem lookup_already_there' :
-    forall t  (f : Formula t) (e : egraph)  (e2 : eclass_id),
-    lookupF f e = Some e2 ->
-    add_formula e f = (e, e2).
-    induction f.
-    {
-      intros.
-      cbn in H.
-      destruct (lookupF _ _) eqn:? in H.
-      2:{ inversion H.  }
-      destruct (lookupF _ _) eqn:? in H.
-      2:{ inversion H.  }
-      cbn.
-      destruct (add_formula _ _) eqn:?.
-      pose proof (IHf1 _ _ Heqo).
-      assert (e0 = e4) by congruence.
-      assert (e = e3) by congruence.
-      subst.
-      destruct (add_formula e3 f2) eqn:?.
-      pose proof (IHf2 _ _ Heqo0).
-      cleanup'.
-      assert (e0 = e1) by congruence.
-      assert (e = e3) by congruence.
-      subst.
-      subst.
-      rewrite H.
-      eauto.
-    }
-    {
-      intros.
-      cbn in *.
-      rewrite H.
-      eauto.
-    }
-    Qed.
-
-
-  Lemma add_formula_safe : forall {t} (f : Formula t) e ,
-    invariant_egraph e ->
-    let '(newe, newal) := add_formula e f in
-    invariant_egraph newe /\
-    lookupF f newe = Some newal /\
-    (forall t' (g : Formula t') old,
-      (lookupF g e = Some old ->
-       lookupF g newe = Some old) ).
-       (* Admitted. *)
-    induction f.
-    2:{
-      intros.
-      pose proof @add_atom_safe.
-      destruct (add_formula e0 _) eqn:?.
-      repeat auto_specialize.
-      specialize (H0 _ n e).
-      rewrite Heqp in H0.
-      eauto.
-      remember (Atom1 n t0 e).
-      cbn in *.
-      assert (lookupF f e1 = Some e2).
-      subst f.
-      cbn in *.
-      destruct (lookup e0 _) eqn:? in Heqp.
-      {
-      inversion Heqp.
-      subst.
-      eauto.
-      }
-      {
-      inversion Heqp.
-      subst.
-      cbn.
-      unfold lookup, Enodes.lookup, lookup' in Heqo |-*. 
-      simpl in *.
-      clear Heqp.
-      unfold add_enode. 
-      unfold lookup, Enodes.lookup, lookup'. 
-      destruct (n2id e0).
-      destruct (PTree.get _ _) eqn:? in Heqo.
-      inversion Heqo.
-      rewrite Heqo0.
-      rewrite PTree.gss.
-      simpl.
-      destruct H.
-      erewrite uf_id_outside0   by lia.
-      eauto.
-      }
-      split; eauto.
-      split; eauto.
-      intros.
-      subst.
-      simpl in *.
-      destruct (lookup e0 _) eqn:? in Heqp.
-      {
-        inversion Heqp.
-        subst; eauto.
-      }
-      {
-        inversion Heqp.
-        subst.
-        cbn in H1.
-        pose proof @lookup_add_not_there.
-        assert (lookup e0 (EAtom1 n ) = None).
-        unfold lookup.
-        cbn in *; eauto.
-        epose proof (H3 _ _ _ _ _ _ H H4 H2 ).
-        eauto.
-      }
-    }
-    {
-      intros.
-      pose proof (IHf1 _ H ).
-      destruct (add_formula e f1) eqn:?.
-      cleanup'.
-      pose proof (IHf2 _ H0).
-      destruct (add_formula e0 f2) eqn:?.
-      cleanup'.
-      cleanup'.
-      cbn - [eqf lookupF].
-      rewrite Heqp.
-      rewrite Heqp0.
-      (* destruct (lookupF (App1 f1 f2) _) eqn:?; eauto. *)
-      destruct (lookup e2 (EApp1 e1 e3)) eqn:?; eauto.
-      2:{
-        split.
-        {
-          pose lookupF_canonical.
-          specialize c with (2:= H4). 
-          specialize (c H3).
-          rewrite c.
-          specialize H5 with (1:= H1). 
-          pose lookupF_canonical.
-          specialize c0 with (2:= H5). 
-          specialize (c0 H3).
-          rewrite c0.
-          pose proof @add_app1_safe; eauto.
-        }
-        split.
-        {
-          cbn.
-          simpl in *.
-          epose proof (@lookup_add_not_there _ f2 e2 (EApp1 e1 e3 ) e3 _ H3 Heqo H4).
-          epose proof (@lookup_add_not_there _ f1 e2 (EApp1 e1 e3 ) e1 _ H3 Heqo (H5 _ _ _ H1)).
-          rewrite H7.
-          rewrite H6.
-          unfold lookup, Enodes.lookup, lookup', add_enode in Heqo |-*.
-          simpl.
-          destruct (n2id e2) eqn:?.
-          pose proof (H5 _ _ _ H1).
-          pose proof (@lookupF_canonical _ H3 _ _ _ H8) as n_cano.
-          pose proof (@lookupF_canonical _ H3 _ _ _ H4) as n0_cano.
-          rewrite n_cano, n0_cano; eauto.
-          simpl in *.
-          unfold lookup, Enodes.lookup, lookup', add_enode in Heqo |-*.
-          erewrite n_cano in Heqo.
-          destruct (PTree.get _ _) eqn:? in Heqo.
-          rewrite Heqo0 in *.
-          erewrite n0_cano in Heqo.
-          destruct (PTree.get _ _) eqn:? in Heqo.
-          inversion Heqo.
-          rewrite Heqo1.
-          rewrite PTree.gss.
-          rewrite PTree.gss.
-          simpl.
-          destruct H3.
-          erewrite uf_id_outside0   by lia.
-          intuition lia. 
-          rewrite Heqo0.
-          rewrite PTree.gss.
-          rewrite PTree.gss.
-          simpl.
-          destruct H3.
-          erewrite uf_id_outside0   by lia.
-          intuition lia. 
-        }
-        {
-          intros.
-          pose proof  (H2 _ _ _ H6) as gint1.
-          pose proof  (H5 _ _ _ gint1) as gint2.
-          epose proof (@lookup_add_not_there _ g e2 (EApp1 e1 e3 ) old _ H3 Heqo gint2).
-          eauto.
-        } 
-      }
-      {
-        split.
-        {
-          pose proof @add_app1_safe; eauto.
-        }
-        split.
-        {
-          cbn.
-          rewrite H4.
-          pose proof (H5 _ _ _ H1).
-          rewrite H6.
-          eauto.
-        }
-        {
-          intros.
-          eapply H5.
-          eapply H2.
-          eauto.
-        }
-      }
-    }
-    Qed. 
-
-
-    Fixpoint substF {t t'} (e : egraph) (f : Formula t)
-    (from : eclass_id)
-    (to : Formula t') : Formula t.
-    unshelve refine (let sub := _ in _).
-    2:{
-      destruct f.
-      {
-        pose (substF _ _ e f1 from to) as f'1 .
-        pose (substF _ _ e f2 from to) as f'2 .
-        exact (App1 f'1 f'2).
-      }
-      {
-        exact (Atom1 n t0 e0).
-      }
-    }
-    cbn in sub.
-    destruct (dt_eq' t' t).
-        {
-          subst.
-          destruct (lookupF sub e) .
-          {
-            destruct (Pos.eqb e0 from).
-            {
-              exact to.
-            }
-            exact sub.
-          }
-          {
-            exact sub.
-          }
-        }
-        {
-          exact sub.
-        }
-    Defined.
-
-    Lemma merge_helper : forall e,
-    invariant_egraph e ->
-    forall newe {t} (f1 : Formula t) (f2 : Formula t)
-    (e1 e2 : eclass_id),
-    lookupF f1 e = Some e1 ->
-    lookupF f2 e = Some e2 ->
-    merge e e1 e2 = newe ->
-    forall  {t'} (f : Formula t') (e3 : eclass_id),
-    lookupF f newe = Some e3 ->
-    lookupF (substF e f e1 f2) e = Some e3.
-    Admitted.
-    (* intros.
-    revert dependent f2.
-    revert dependent f1.
-    revert dependent e1.
-    revert dependent e2.
-    revert dependent e3.
-    revert dependent f.
-    induction f.
-    {
-      intros.
-      (* pose proof H3 as init. *)
-      simpl in H3.
-      destruct (lookupF _ _) eqn:? in H3.
-      2:{ inversion H3. }
-      destruct (lookupF _ _) eqn:? in H3.
-      2:{ inversion H3. }
-
-      repeat auto_specialize.
-      subst.
-
-      (* H3 represente la classe dans l'egraph merge *)
-      cbn in *.
-      destruct (dt_eq' t td).
-      2:{
-        simpl.
-        rewrite IHf1.
-        rewrite IHf2.
-        pose proof (@lookupF_canonical e H ) as H2.
-        unfold merge,lookup, merge_n2id, Enodes.lookup, lookup' in H3 .
-        simpl in H3.
-        destruct (n2id e) eqn:? in H3.
-        (* rewrite Heqm.
-        simpl.
-       
-        (* erewrite (H2 _ _ _ IHf2) in H3;eauto. *)
-        (* 2:{ inversion H3.  } *)
-        pose proof (@lookupF_canonical _ H _ _ _ IHf1) as n_cano.
-        pose proof (@lookupF_canonical _ H _ _ _ IHf2) as n2_cano.
-        pose proof (@lookupF_canonical _ H _ _ _ H0) as n3_cano.
-        pose proof (@lookupF_canonical _ H _ _ _ H1) as n4_cano.
-        rewrite n3_cano in H3 .
-        rewrite n4_cano in H3.
-        rewrite n3_cano in H3.
-        rewrite n2_cano.
-        rewrite n_cano.
-         *)
-        (* destruct (Nat.eq_dec _ _); inversion H3; subst; eauto. *)
-        assert (lookupF (App1 (substF e f1 e1 f3) (substF e f2 e1 f3)) e = Some e1).
-        cbn.
-        rewrite IHf1.
-        rewrite IHf2.
-
-        unfold merge,lookup, merge_n2id, Enodes.lookup, lookup' in H3 |-*.
-        rewrite Heqm.
-        simpl.
-        destruct (PTree.get _ _) eqn:? in H3.
-        2:{ inversion H3. }
-        destruct (PTree.get _ _) eqn:? in H3.
-        2:{ inversion H3. }
-        simpl. unfold union,find in *|-.
-        admit.
-         (* rewrite n_cano.
-        rewrite n2_cano.
-        eauto. *)
-        destruct H.
-        specialize (wt_egraph0 _ _ _ _ _ H4 H0).
-        contradiction n; eauto.
-      }
-      {
-        destruct e5.
-        cbn in *.
-        rewrite IHf1, IHf2.
-        pose proof (@lookupF_canonical e H ) as H2.
-        epose (H2 _ _  _ IHf2).
-        admit.
-         (* in H3;eauto.
-        destruct (n2id _ _) eqn:? in H3.
-        2:{ inversion H3.  }
-        {
-          pose proof (@lookupF_canonical _ H _ _ _ IHf1) as n_cano.
-          rewrite n_cano in Heqo1.
-          destruct (Nat.eq_dec _ _) eqn:? in H3.
-          subst.
-          rewrite Heqo1.
-          rewrite Heqs.
-          inversion H3; subst; eauto.
-          inversion H3; subst; eauto.
-          rewrite Heqo1.
-          rewrite Heqs.
-          simpl.
-          rewrite IHf1.
-          rewrite IHf2.
-          eauto.
-        } *)
-      }
-    }
-  {
-      intros.
-      (* pose proof H3 as init. *)
-      simpl in H3.
-      simpl.
-      subst.
-
-      (* H3 represente la classe dans l'egraph merge *)
-      simpl in *.
-      destruct t0.
-      cbn.
-      destruct (dt_eq' t T0).
-      2:{
-        simpl.
-        (* unfold lookup, Enodes.lookup, lookup', merge, merge_n2id in *. *)
-        simpl in *.
-        eauto.
-        destruct (n2id e ) eqn:? in H3;
-        unfold lookup;
-        cbn.
-        rewrite Heqm.
-        (* 2:{ inversion H3.  }
-        destruct (Nat.eq_dec _ _ );
-        inversion H3; subst; eauto. *)
-        assert (lookupF (Atom1 n {| T:=T0; state:=state0 |} e0) e = Some e1) .
-        cbn; unfold lookup; cbn; eauto.
-        unfold Enodes.lookup, lookup'.
-        rewrite Heqm.
-        admit.
-        destruct H.
-        specialize (wt_egraph0 _ _ _ _ _  H2 H0).
-        contradiction n0; eauto.
-      }
-      {
-        destruct e4.
-        cbn in *.
-        unfold lookup,Enodes.lookup, lookup',merge  in *.
-        simpl in*.
-        destruct (n2id e) eqn:?.
-        unfold lookup in *.
-
-        unfold merge_n2id, lookup,Enodes.lookup, lookup',merge  in *.
-        admit.
-        (* 2:{ inversion H3.  }
-        {
-          cbn in *.
-          rewrite Heqo.
-          destruct (Nat.eq_dec _ _) eqn:? in H3.
-          rewrite Heqs.
-          inversion H3; subst; eauto.
-          rewrite Heqs.
-          simpl.
-          inversion H3; subst; eauto.
-        } *)
-      }
-    } *)
-       (* Qed. *)
-
-    Lemma subst_helper :
-    forall {t'} (f : Formula t'),
-    forall {t} (f1 : Formula t) (f2 : Formula t) e (e1 : eclass_id),
-    invariant_egraph e ->
-    interp_formula ctx f1 = interp_formula ctx f2 ->
-    lookupF f1 e = Some e1 ->
-    interp_formula ctx f = interp_formula ctx (substF e f e1 f2).
-    Ltac t := subst; simpl; eauto.
-    Admitted.
-    (* induction f.
-    - intros.
-      repeat auto_specialize.
-      simpl.
-      rewrite  IHf1, IHf2.
-      simpl.
-      destruct (dt_eq' t0 td) eqn:?.
-      2:{
-        simpl.
-        eauto.
-      }
-      destruct e0.
-      simpl.
-      remember (eq_rect_r  _ _ _ ).
-      cbn in Heqy.
-      remember (y f3).
-      subst y.
-      destruct (lookupF _ _) eqn:? in Heqf; try solve[ t ].
-      destruct (lookupF _ _) eqn:? in Heqf; try solve[ t ].
-      destruct (n2id _ _) eqn:? in Heqf; try solve [ t ].
-      destruct (Nat.eq_dec _ _) eqn:? in Heqf; try solve [ t ].
-      subst.
-      rewrite <- H0.
-      destruct H.
-      erewrite (correct0 _ f0 (App1 (substF e f1 e1 f3) (substF e f2 e1 f3))).
-      eauto.
-      eauto.
-      simpl.
-      rewrite Heqo, Heqo0.
-      eauto.
-    -
-      intros.
-      simpl.
-      destruct t0.
-      cbn in *.
-      destruct (dt_eq' t T0) eqn:?.
-      2:{
-        simpl.
-        eauto.
-      }
-      destruct e2.
-      remember (eq_rect_r _  _ _).
-      remember (y f2).
-      subst y.
-      cbn in *.
-      unfold lookup in *.
-      cbn in *.
-      destruct (n2id _ _) eqn:? in Heqf; try solve [ t ].
-      destruct (Nat.eq_dec _ _) eqn:? in Heqf; try solve [ t ].
-      subst.
-      rewrite <- H0.
-      destruct H.
-      erewrite (correct0 _ f1 (Atom1 n {| T:= t; state := state0 |} e)).
-      eauto.
-      eauto.
-      simpl.
-      unfold lookup; cbn.
-      eauto.
-    Qed. *)
-
-    Lemma type_preserved : forall {t1}  (f1 : Formula t1) {t2 t} (f g : Formula t)
-          (f2 : Formula t2) e n0 n1 n2,
-        invariant_egraph e ->
-        lookupF f1 (merge e n0 n1) = Some n2 ->
-        lookupF f2 (merge e n0 n1) = Some n2 ->
-        lookupF f e = Some n0 ->
-        lookupF g e = Some n1 ->
-        t1 = t2.
-          pose proof merge_helper as H.
-          pose proof merge_helper as H434.
-          intros.
-          specialize H with (1:= H0).
-          specialize H with (1:= H3).
-          specialize H with (1:= H4).
-          specialize H with (1:= eq_refl).
-          specialize H with (1:= H1).
-          specialize H434 with (1:= H0).
-          specialize H434 with (1:= H3).
-          specialize H434 with (1:= H4).
-          specialize H434 with (1:= eq_refl).
-          specialize H434 with (1:= H2).
-          destruct H0.
-          eapply wt_egraph0.
-          eapply H.
-          eapply H434.
-    Qed.
-
-
-  Theorem merge_preserve : forall {t} (e : egraph) (f g : Formula t),
-    invariant_egraph e ->
-    interp_formula ctx f = interp_formula ctx g ->
-    let '(newe, before_merge_f, before_merge_g) := mergeF e f g in
+    interp_term typemap constmap [] f wf_f = interp_term typemap constmap [] g wf_g ->
+    let '(newe, before_merge_f, before_merge_g) := merge_terms e f g in
     invariant_egraph newe.
     Admitted.
-    (* intros.
-    destruct (mergeF e f g) eqn:?.
-    destruct p.
-    econstructor.
-    {
-      intros.
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H3 _ f).
-      rewrite Heqp0 in H3.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H7 _ g).
-      rewrite Heqp1 in H7.
-      cleanup'.
-      pose proof merge_helper .
-      pose proof @subst_helper.
-      (* repeat auto_specialize. *)
-      specialize (H12) with (1:= H7).
-      specialize (H13) with (1:= H7).
-      pose proof H13 as interpf .
-      rename H13 into interpg .
-      specialize (interpf) with (1:= H0).
-      (* symmetry in H0. *)
-      (* specialize (interpg) with (1:= H0). *)
-      specialize (H12) with (3:= H4).
-      assert (lookupF f e2 = Some n1) by eauto.
-      assert (lookupF g e2 = Some n2) by eauto.
-      (* specialize (H8 _ _ H9 H10). *)
-      pose proof (H12 _ _ _ H13 H14 _ _ _ H1).
-      pose proof (H12 _ _ _ H13 H14 _ _ _ H2).
-      erewrite interpf.
-      2:{ eauto.  }
-      erewrite (interpf _ g0).
-      2:{ eauto.  }
-      eapply H7.
-      eauto.
-      eauto.
-    }
-    {
-       intros.
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H2 _ f).
-      rewrite Heqp0 in H2.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H6 _ g).
-      rewrite Heqp1 in H6.
-      cleanup'.
-      subst.
-      cbn in H1.
-      destruct (n2id _ _ ) eqn:?.
-      2:{ inversion H1. }
-      destruct (Nat.eq_dec _ _) eqn:?.
-      {
-        inversion H1.
-        subst.
-        assert (lookupF g e2 = Some eid) by eauto.
-        pose proof (@nobody_lookupF_outside  _ H6 _ _ _ H3).
-        cbn.
-        eauto.
-      }
-      cbn in *.
-      destruct H6.
-      inversion H1.
-      subst.
-      eapply nobody_outside0.
-      eauto.
-    }
-    {
-      intros.
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H2 _ f).
-      rewrite Heqp0 in H2.
-      cleanup'.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H8 _ g).
-      rewrite Heqp1 in H8.
-      subst.
-      cbn.
-      cleanup'.
-      unfold union.
-      repeat split.
-      destruct (Nat.eq_dec _ _).
-      {pose proof (nobody_lookupF_outside _ H3 _ _ _ H4).
-      pose proof (@lookupF_canonical _ H3 _ _ _ H4).
-      rewrite H9; lia.
-      }
-      {
-      cbn in H1.
-      destruct (n2id _ _ ) eqn:?.
-      2:{ inversion H1. }
-      destruct H3.
-      specialize (no_args_eapp1_outside0 _ _ _ Heqo).
-      cleanup'; eauto.
-      pose proof (ge_dec e1 (max_allocated e4)).
-      destruct H9.
-      repeat auto_specialize.
-      rewrite uf_id_outside0 in H3.
-      rewrite uf_id_outside0 in H3.
-      lia.
-      assert (e1< max_allocated e4).
-      lia.
-      eapply wf_uf0; eauto.
-      }
-     destruct (Nat.eq_dec _ _).
-     {
-      pose proof (nobody_lookupF_outside _ H3 _ _ _ H4).
-      pose proof (@lookupF_canonical _ H3 _ _ _ H4).
-      rewrite H9; lia.
-     }
-     {
-      cbn in H1.
-      destruct (n2id _ _ ) eqn:?.
-      2:{ inversion H1. }
-      destruct H3.
-      specialize (no_args_eapp1_outside0 _ _ _ Heqo).
-      cleanup'; eauto.
-      pose proof (ge_dec e2 (max_allocated e4)).
-      destruct H9.
-      repeat auto_specialize.
-      rewrite uf_id_outside0 in H8.
-      rewrite uf_id_outside0 in H8.
-      lia.
-      assert (e2< max_allocated e4).
-      lia.
-      eapply wf_uf0; eauto.
-      }
-    }
-    {
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H1 _ f).
-      rewrite Heqp0 in H1.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H5 _ g).
-      rewrite Heqp1 in H5.
-      cleanup'.
-      subst.
-      cbn.
-      unfold n2idCanonical.
-      simpl.
-      intros.
-      unfold classIsCanonical.
-      simpl.
-        destruct e1.
-        pose proof (@lookupF_canonical _ H5).
-        pose proof (nobody_lookupF_outside _ H5) as nobodyOutside.
-        destruct H5.
-        unfold n2idCanonical in sanely_assigned_lookup0.
-        unfold union.
-        cbn.
-        unfold find.
-        cbn.
-        destruct (n2id _ _) eqn:? in H2.
-        cbn in H2.
-        2:{ inversion H2. }
-        destruct (Nat.eq_dec (uf e2 n0) _) eqn:?.
-        {
-          destruct (Nat.eq_dec _ _) eqn:?.
-          inversion H2.
-          subst.
-          assert (lookupF g e2 = Some c) by eauto.
-          eapply H3; eauto.
-          inversion H2.
-          subst.
-          unfold n2idCanonical in *.
-          specialize (sanely_assigned_lookup0  _ _ Heqo).
-          unfold classIsCanonical in sanely_assigned_lookup0.
-          unfold find in sanely_assigned_lookup0.
-          clear Heqs.
-          rewrite sanely_assigned_lookup0 in e0.
-          assert (lookupF f e2 = Some n0) by eauto.
-          specialize (H3 _ _ _ H4).
-          rewrite H3 in e0.
-          congruence.
-          (* unfold n2idCanonical in  *)
-        }
-        {
-          destruct (Nat.eq_dec _ _) eqn:?.
-          inversion H2.
-          subst.
-          assert (lookupF g e2 = Some c) by eauto.
-          eapply H3; eauto.
-          inversion H2.
-          subst.
-          eapply sanely_assigned_lookup0.
-          eauto.
-        }
-    }
-    {
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H1 _ f).
-      rewrite Heqp0 in H1.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H5 _ g).
-      rewrite Heqp1 in H5.
-      cleanup'.
-      subst.
-      cbn.
-      pose proof (@lookupF_canonical _ H5) as canonicalLookup.
-      pose proof (nobody_lookupF_outside _ H5) as nobodyOutside.
-      destruct H5.
-      unfold union.
-      intros.
-      specialize (uf_id_outside0  _ H6).
-      {
-        unfold classIsCanonical.
-        cbn.
-        unfold union.
-        destruct (Nat.eq_dec _ _) eqn:?.
-        2:{
-          unfold find.
-          eauto.
-        }
-        unfold find in e0.
-        clear Heqs.
-        rewrite uf_id_outside0 in e0.
-        assert (lookupF f e2  = Some n0) by eauto.
-        specialize (canonicalLookup _ _ _ H2).
-        rewrite canonicalLookup in e0.
-        specialize (nobodyOutside _ _ _ H2).
-        rewrite <- e0 in H6.
-        cbn in H6.
-        lia.
-      }
-    }
-    {
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H1 _ f).
-      rewrite Heqp0 in H1.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H5 _ g).
-      rewrite Heqp1 in H5.
-      cleanup'.
-      subst.
-      cbn.
-      pose proof @type_preserved.
-      eapply H2; eauto.
-    }
-    {
-      unfold mergeF in Heqp.
-      (* unfold merge in Heqp. *)
-      destruct (add_formula _ _) eqn:?.
-      destruct (add_formula _ _) eqn:? in Heqp.
-      inversion Heqp.
-      pose proof @add_formula_safe.
-      auto_specialize.
-      specialize (H1 _ f).
-      rewrite Heqp0 in H1.
-      pose proof @add_formula_safe.
-      cleanup'.
-      auto_specialize.
-      specialize (H5 _ g).
-      rewrite Heqp1 in H5.
-      cleanup'.
-      subst.
-      cbn.
-      unfold union.
-      destruct (Nat.eq_dec _ _).
-      (* destruct H5. *)
-      eapply wf_uf; eauto.
-      eapply (nobody_lookupF_outside); eauto.
-      eapply wf_uf; eauto.
-    }
-    *)
-  (* Qed. *)
-
-Lemma apply_add_formula : forall {t} (f : Formula t) e newe,
-    invariant_egraph e ->
-    (fst (add_formula e f)) = newe ->
-    invariant_egraph newe.
-    pose proof @add_formula_safe.
-    intros.
-    repeat auto_specialize.
-    specialize (H _ f).
-    destruct (add_formula e f) eqn:?;
-    cleanup'; eauto.
-    cbn in H1; subst; eauto.
-Qed.
-Theorem apply_merge : forall {t} (e newe: egraph) (f g : Formula t),
-    invariant_egraph e ->
-    interp_formula ctx f = interp_formula ctx g ->
-    (fst (fst (mergeF e f g)) = newe) ->
-    invariant_egraph newe.
-    pose proof @merge_preserve.
-    intros.
-    repeat auto_specialize.
-    destruct (mergeF _ _ _) eqn:?;
-    cleanup'; eauto.
-    cbn in H2; subst; eauto.
-    destruct p.
-    eauto.
-Qed.
-
 End egraphs.
 
 (* Note we need to make sure that types are uniquely put in the list, no duplicate! *)
@@ -3499,51 +845,28 @@ Voir si on peut reduire les ensembles d'une manière qui soit utilisable.
 Voir si on peut reconstruire une Formula depuis un enode.
 Grace au type deeply embedded, et la recursion sur les TArrows,
 je crois qu'une telle recursion devcrait etre possible structurellement. *)
-Lemma empty_invariant {typemap varmap}: invariant_egraph (typemap:=typemap) (ctx:=varmap) empty_egraph.
-econstructor; firstorder.
-{
-  cbn in *.
-  unfold empty_egraph in *.
-  destruct f. cbn in H.
-  destruct (lookupF _ _) eqn:? in H;
-  try destruct (lookupF _ _) eqn:? in H.
-  inversion H.
-  inversion H.
-  inversion H.
-  cbn in H.
-  inversion H.
-}
+Lemma empty_invariant {typemap constmap}: invariant_egraph (typemap:=typemap) (constmap:=constmap) empty_egraph.
 Admitted.
 
-Ltac cleanup' := intros;
-  repeat match goal with
-  | H: _ /\ _ |- _ => destruct H
-  | H: _ <-> _ |- _ => destruct H
-  | H: exists _, _  |- _ => destruct H
-  | H: True  |- _ => clear H
-  | H : ?a = ?b, H' : ?a = ?b |- _ => clear H'
-  | H : ?P, H' : ?P |- _ =>
-    let t := type of P in
-    assert_succeeds(constr_eq t Prop);
-    clear H'
-  end.
-
-Fixpoint propose_formula {typemap} {t}
-   (ctx : asgn typemap) (e : egraph) (fuel : nat)
-     (current_class : eclass_id) : option (Formula (ctx:=ctx) t).
+Fixpoint propose_term {typemap} 
+   (constmap : list (dyn typemap))
+   (e : egraph) (fuel : nat)
+   (current_class : eclass_id) 
+   (t : type)
+   : option (term t).
   unshelve refine(match fuel with
-  | 0 => None
+  | O => None
   | S fuel =>
      match PTree.get current_class (id2s e) with
      | None => None
-     | Some (eid, t', (atoms_candidates, eapp_candidates)) =>
-      (* On essaie de trouver *)
+     | Some (eid, t', (set_atoms, set_eapp)) =>
       _
-      
      end
   end).
-  unshelve refine (let found_atoms := PTree.tree_fold_preorder(fun acc el => 
-                          (_ : list (Formula (ctx:=ctx) t))) atoms_candidates nil in 
+  unshelve refine (let found_atoms := PTree.tree_fold_preorder (fun acc el => 
+                          match el with
+                          | None =>
+                          (_ : list (Formula (ctx:=ctx) t))) set_atoms None in 
                           _).
   rename el into i.
   destruct (nth_error ctx ((Pos.to_nat i) - 1)) eqn:?.
@@ -6458,3 +3781,2343 @@ Section Term.
 
 Require Import Eqdep.
 
+
+Require Coq.Lists.List. Import List.ListNotations.
+Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
+Require Import Coq.micromega.Lia.
+Require Import Coq.Logic.PropExtensionality.
+
+Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
+Module PropLemmas.
+  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
+  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
+  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
+  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
+End PropLemmas.
+
+
+Section WithLib.
+  Context (word: Type)
+          (ZToWord: Z -> word)
+          (unsigned: word -> Z)
+          (wsub: word -> word -> word)
+          (wadd: word -> word -> word)
+          (wopp: word -> word).
+
+  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
+          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
+          (wadd_comm: forall a b, wadd a b = wadd b a)
+          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
+
+  (* Preprocessing: *)
+  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
+
+  (* With sideconditions: *)
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+
+  Context (mem: Type)
+          (word_array: word -> list word -> mem -> Prop)
+          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
+
+  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
+
+  Ltac pose_list_lemmas :=
+    pose proof (@List.firstn_cons word) as firstn_cons;
+    pose proof (@List.skipn_cons word) as skipn_cons;
+    pose proof (@List.app_comm_cons word) as app_cons;
+    pose proof (@List.firstn_O word) as firstn_O;
+    pose proof (@List.skipn_O word) as skipn_O;
+    pose proof (@List.app_nil_l word) as app_nil_l;
+    pose proof (@List.app_nil_r word) as app_nil_r.
+
+  Ltac pose_prop_lemmas :=
+    pose proof PropLemmas.and_True_l as and_True_l;
+    pose proof PropLemmas.and_True_r as and_True_r;
+    pose proof PropLemmas.eq_eq_True as eq_eq_True.
+
+  Definition lipstick {A:Type} {a:A} := a.
+
+  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
+                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
+        (f g: word -> word) (b: word)
+        (HL: length vs = 3%nat)
+        (H : sep (word_array a
+          (List.firstn
+             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs) ++
+           [w2] ++
+           List.skipn
+             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs))) R m),
+      f (wadd b a) = g b /\
+      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
+      f (wadd b a) = f (wadd a b).
+  Proof.
+    intros.
+
+    pose_list_lemmas.
+    pose_prop_lemmas.
+
+    intros.
+    specialize (eq_eq_True word).
+
+    (* Make problems simpler by only considering one combination of the booleans,
+       but it would be nice to treat all of them at once *)
+    replace cond0_0 with false in * by admit.
+    replace cond0 with false in * by admit.
+
+    (* Make problem simpler by not requiring side conditions: since we know the
+       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
+       be on cons without sideconditions rather than on app with side conditions
+       on length *)
+    destruct vs as [|v0 vs]. 1: discriminate HL.
+    destruct vs as [|v1 vs]. 1: discriminate HL.
+    destruct vs as [|v2 vs]. 1: discriminate HL.
+    destruct vs as [|v3 vs]. 2: discriminate HL.
+    clear HL.
+    cbn.
+    (* cbn in H. <-- We don't do this cbn because now that we've done the above
+       destructs, cbn can do much more than it usually would be able to do. *)
+
+    (* Preprocessing *)
+    rewrite wsub_def in *.
+    clear wsub_def.
+    apply PropLemmas.eq_True in H.
+
+    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
+    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
+
+    (* Constant propagation rules, manually chosen to make things work,
+       TODO how to automate? *)
+    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
+
+  Ltac reify_interp_roundtrip h := 
+   let t := type of h in
+   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
+   let tname := fresh "tm" in
+   pose tmap as tname;
+   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
+   (* idtac "tmap" tmap "constmap" cmap; *)
+   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
+   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl).
+
+  Time reify_interp_roundtrip H.
+  let tH := type of H in 
+  assert (t = tH) .
+  + Time reflexivity.
+Ltac auto_specialize :=
+  match goal with
+  | H : ?a,  H' : ?a -> _  |- _ =>
+    let t := type of a in
+    constr_eq t Prop;
+    specialize( H' H)
+  | H : ?a,  H' :  _  |- _ =>
+    let t := type of a in
+    constr_eq t Prop;
+    specialize H' with (1:= H)
+  |  H' :  _  |- _ =>
+    specialize H' with (1:= eq_refl)
+  end.
+  
+  Ltac cleanup' := intros;
+  repeat match goal with
+  | H: _ /\ _ |- _ => destruct H
+  | H: _ <-> _ |- _ => destruct H
+  | H: exists _, _  |- _ => destruct H
+  | H: True  |- _ => clear H
+  | H : ?a = ?b, H' : ?a = ?b |- _ => clear H'
+  | H : ?P, H' : ?P |- _ =>
+    let t := type of P in
+    assert_succeeds(constr_eq t Prop);
+    clear H'
+  end.
+  Open Scope positive.
+
+Theorem nobody_lookupF_outside e :
+  invariant_egraph e ->
+  forall t (a : Formula t) (eid : eclass_id),
+    lookupF a e = Some eid ->
+    eid < max_allocated e.
+  intro.
+  induction a.
+  (* -
+    cbn.
+    intros.
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct H.
+    eapply nobody_outside0; eauto. *)
+  -
+    cbn.
+    intros.
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct H.
+    eapply nobody_outside0; eauto.
+  -
+    cbn.
+    intros.
+    unfold lookup in H0.
+    destruct H.
+    eapply nobody_outside0; eauto.
+  Qed.
+
+
+Theorem lookupF_canonical e  :
+  invariant_egraph e ->
+  forall {t} (f : Formula t) (c : eclass_id),
+   lookupF f e = Some c ->
+   classIsCanonical e c.
+   intro.
+   induction f.
+  -
+    intros; cbn in H0.
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    repeat auto_specialize.
+    destruct H.
+    unfold n2idCanonical in sanely_assigned_lookup0.
+    cleanup'.
+    repeat auto_specialize.
+    eauto.
+  -
+    intros.
+    cbn in H0.
+    unfold lookup in H0.
+    cbn in H0.
+    destruct H.
+    unfold n2idCanonical in sanely_assigned_lookup0.
+    cleanup'.
+    eapply sanely_assigned_lookup0 with (f:=EAtom1 n).
+    eauto.
+  Qed.
+
+  Lemma dt_eq'_refl : forall {t},
+  exists p, dt_eq' t t = left p.
+  induction t.
+  - cbn.
+    pose (nat_eq_refl t).
+    destruct e.
+    rewrite H.
+    destruct x.
+    cbn.
+    eexists; eauto.
+  -
+    destruct IHt1.
+    destruct IHt2.
+    destruct x.
+    destruct x0.
+    cbn.
+    rewrite H0.
+    rewrite H.
+    cbn.
+    eexists; eauto.
+  Qed.
+
+
+
+
+  (* TODO this lemma will be a good exercise for exams in the future *)
+  Lemma dt_sane : forall td t1, dt_eq (t1 ~> td) td = false.
+  induction td.
+  -
+    cbn; eauto.
+  -
+    cbn in *.
+    intros.
+    destruct td2.
+    2:{
+      specialize (IHtd2 td2_1).
+      eapply Bool.andb_false_iff in IHtd2.
+      destruct IHtd2.
+      erewrite dteq_refl in H.
+      inversion H.
+      rewrite H.
+      eapply Bool.andb_false_iff .
+      right.
+      eapply Bool.andb_false_iff .
+      right; eauto.
+    }
+      eapply Bool.andb_false_iff .
+      right; eauto.
+      Qed.
+  Lemma dt_sanef : forall t1 td , dt_eq (t1 ~> td) t1 = false.
+  induction t1.
+  -
+    cbn; eauto.
+  -
+    cbn in *.
+    intros.
+    destruct t1_1.
+    eauto.
+    {
+      specialize (IHt1_1 t1_2).
+      eapply Bool.andb_false_iff in IHt1_1 .
+      destruct IHt1_1.
+      rewrite H; eauto.
+      rewrite H.
+      rewrite Bool.andb_comm.
+      rewrite Bool.andb_assoc.
+      rewrite Bool.andb_comm.
+      cbn. eauto.
+    }
+    Qed.
+  (* TODO this lemma will be a good exercise for exam in the future *)
+  Lemma dt_sane2 : forall td t1 t2, dt_eq (t1 ~> t2 ~> td) td = false.
+  induction td.
+  -
+    cbn; eauto.
+  -
+    cbn in *.
+    intros.
+    destruct td2.
+    2:{
+      specialize (IHtd2 td2_1).
+      eapply Bool.andb_false_iff in IHtd2.
+      destruct IHtd2.
+      erewrite dteq_refl in H.
+      inversion H.
+      rewrite H.
+      eapply Bool.andb_false_iff .
+      right.
+      eapply Bool.andb_false_iff .
+      right; eauto.
+    }
+      eapply Bool.andb_false_iff .
+      right; eauto.
+   Qed.
+
+  Lemma dt_sane2f : forall t1 t2 td, dt_eq (t1 ~> t2 ~> td) t1 = false.
+  induction t1.
+  -
+    cbn; eauto.
+  -
+    cbn in *.
+    intros.
+    case t1_1 eqn:?.
+    simpl;eauto.
+    case t1_2 eqn:?.
+    rewrite Bool.andb_comm.
+    cbn; eauto.
+    {
+      destruct d2.
+      {
+      eapply Bool.andb_false_iff in IHt1_1.
+      destruct IHt1_1.
+      rewrite H; eauto.
+      rewrite Bool.andb_comm.
+      rewrite Bool.andb_assoc.
+      rewrite Bool.andb_comm.
+      cbn. eauto.
+      exact t2.
+      exact t2.
+      }
+      {
+        specialize (IHt1_1 d2_1 d2_2).
+      eapply Bool.andb_false_iff in IHt1_1.
+      destruct IHt1_1.
+      rewrite H; eauto.
+      rewrite dteq_refl in H.
+      rewrite dteq_refl in H.
+      cbn in *; inversion H.
+      }
+    }
+   Qed.
+
+  Fixpoint node_size (t : type ) :=
+    match t with
+    | TBase n => 1
+    | TArrow a b => 1 + node_size a + node_size b
+    end.
+
+  Lemma size_eq_dt : forall t1 t2, dt_eq t1 t2 = true -> node_size t1 = node_size t2.
+    induction t1.
+    -
+      cbn.
+      destruct t2.
+      intros.
+      eauto.
+      intros. inversion H.
+    -
+      intros.
+      cbn in *.
+      destruct t2.
+      inversion H.
+      cbn.
+      eapply Bool.andb_true_iff in H.
+      cleanup'.
+      erewrite IHt1_1; eauto.
+      erewrite IHt1_2; eauto.
+    Qed.
+
+  Require Import Lia.
+  (* Even more interesting induction for this one! *)
+  Lemma dt_sane2s : forall t2 t1 td, dt_eq (t1 ~> t2 ~> td) t2 = false.
+  intros.
+  destruct (dt_eq _ _) eqn:?; eauto.
+  pose proof (size_eq_dt _ _ Heqb).
+  cbn [node_size] in H.
+  lia.
+  Qed.
+
+  Lemma dteq_neq_dteq'  : forall t1 t2, dt_eq t1 t2 = false -> exists p, dt_eq' (t1 ) t2 = right p.
+    induction t1.
+    -
+      destruct t2; eauto.
+      cbn; intros.
+      eapply beq_nat_false in H.
+      destruct (Nat.eq_dec t t0).
+      contradiction H; eauto.
+      intros; eexists; eauto.
+      cbn.
+      intros; eexists; eauto.
+    -
+      intros.
+      cbn in *.
+      destruct t2; [eexists; eauto|].
+      eapply Bool.andb_false_iff in H.
+      destruct H.
+      specialize (IHt1_1 _ H).
+      destruct IHt1_1.
+      rewrite H0.
+      destruct (dt_eq' t1_2 t2_2).
+      destruct e.
+      cbn; eexists; eauto.
+      eexists; eauto.
+      specialize (IHt1_2 _ H).
+      destruct IHt1_2.
+      rewrite H0.
+      eexists; eauto.
+  Qed.
+
+  Lemma dt_sane'  : forall td t1, exists p, dt_eq' (t1 ~> td) td = right p.
+    intros.
+    eapply dteq_neq_dteq'.
+    eapply dt_sane.
+  Qed.
+  Lemma dt_sane2'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) td = right p.
+    intros.
+    eapply dteq_neq_dteq'.
+    eapply dt_sane2.
+  Qed.
+ Lemma dt_sane2f'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) t1 = right p.
+    intros.
+    eapply dteq_neq_dteq'.
+    eapply dt_sane2f.
+  Qed.
+ Lemma dt_sane2s'  : forall td t1 t2, exists p, dt_eq' (t1 ~> t2 ~> td) t2 = right p.
+    intros.
+    eapply dteq_neq_dteq'.
+    eapply dt_sane2s.
+  Qed.
+  Lemma dt_comm_right  : forall t1 t2 p, dt_eq' t1 t2 = right p -> exists p', dt_eq' t2 t1 = right p' .
+    induction t1.
+    - intros.
+    destruct t2.
+    cbn in *.
+    destruct (Nat.eq_dec t t0).
+    rewrite e.
+    destruct (Nat.eq_dec _ _).
+    inversion H.
+    contradiction n; eauto.
+    destruct (Nat.eq_dec _ _).
+    contradiction n; eauto.
+    eexists; eauto.
+    cbn in *.
+    eexists; eauto.
+    -
+      intros.
+      cbn in *.
+      destruct t2.
+      cbn.
+      eexists; eauto.
+      cbn.
+      destruct (dt_eq' t1_2 t2_2) eqn:?;
+      destruct (dt_eq' t1_1 t2_1) eqn:?.
+      subst.
+      cbn in H.
+      inversion H.
+      destruct e.
+      cbn in H.
+      specialize (IHt1_1 _ _ Heqs0).
+      destruct IHt1_1.
+      rewrite H0.
+      pose (@dt_eq'_refl t1_2).
+      destruct e.
+      rewrite H1.
+      destruct x0.
+      cbn.
+      eexists; eauto.
+      specialize (IHt1_2 _ _ Heqs).
+      destruct IHt1_2.
+      rewrite H0.
+      eexists; eauto.
+      specialize (IHt1_2 _ _ Heqs).
+      destruct IHt1_2.
+      rewrite H0.
+      eexists; eauto.
+  Qed.
+
+
+  Lemma atom_correct : forall {t t' st} (f1 : Formula t) n eq,
+    eqf f1 (Atom1 n {|T:= t'; state := st|} eq) = true ->
+    exists st' eq', f1 = Atom1 n {| T:= t; state := st'|} eq'.
+    induction f1; intros; cbn in H; try inversion H.
+    destruct t0.
+    cbn in *.
+    destruct (dt_eq' T0 t').
+    eapply Pos.eqb_eq in H; eauto.
+    rewrite <- H.
+    eexists; eexists; eauto.
+    inversion H.
+  Qed.
+
+  Lemma lookup_update {t} (f : Formula t) {old_id2s} :
+  forall e n (eid0 : eclass_id),
+      invariant_egraph e ->
+      lookup e (EAtom1 n) = None ->
+      lookupF f {| max_allocated := max_allocated e + 1;
+                   uf := uf e;
+                   n2id := add_enode (n2id e) (EAtom1 n) (max_allocated e);
+                   id2s := old_id2s |} = Some eid0 ->
+      lookupF f e = Some eid0 \/
+      exists st eq, eqf f (Atom1 n {| T:= t; state := st |} eq) = true.
+    induction f; cbn.
+       2:{
+         intros.
+         cbn.
+         unfold add_enode.
+         cbn.
+         destruct t0.
+         cbn in *.
+         pose proof (@dt_eq'_refl T0).
+         destruct H2.
+         intros.
+         (* rewrite H2. *)
+         unfold lookup in H1.
+         simpl in H1.
+         destruct H.
+         unfold lookup, Enodes.lookup, lookup' in H0, nobody_outside0, H1.
+         unfold add_enode, Enodes.lookup, lookup' in H1.
+         destruct (n2id e0) eqn:?.
+         simpl in H0.
+         destruct ((n =?  n0)%positive) eqn:?.
+         {
+           pose (@Pos.eqb_eq n n0).
+           destruct i.
+           specialize (H Heqb).
+           rewrite H in *.
+           destruct (PTree.get _ _ ) eqn:? in H0.
+           inversion H0.
+           rewrite Heqo in H1.
+           rewrite PTree.gss in H1.
+           rewrite H2.
+           eauto.
+         }
+         {
+         pose (@Pos.eqb_neq n n0).
+         destruct i.
+         specialize (H Heqb).
+         destruct (PTree.get _ _ ) eqn:? in H0.
+         inversion H0.
+         rewrite Heqo in H1.
+         rewrite PTree.gso in H1; eauto.
+         specialize (nobody_outside0 (EAtom1 n) eid0 ).
+         cbn in nobody_outside0.
+         specialize (nobody_outside0 H1).
+         destruct (PTree.get n t) eqn:?.
+         2:{ inversion H1. }
+         inversion H1.
+         left.
+         unfold lookup, Enodes.lookup, lookup'.
+         rewrite Heqm.
+         simpl.
+         rewrite Heqo0.
+         eauto. 
+       }
+       }
+       {
+          intros.
+          destruct (lookupF f1 _) eqn:? in H1.
+          destruct (lookupF f2 _)  eqn :? in H1.
+          specialize (IHf1 _ _ _ H H0 Heqo).
+          specialize (IHf2 _ _ _ H H0 Heqo0).
+          destruct IHf1.
+        
+          2:{
+            cleanup'.
+            pose proof (eq_preserve_type _ _ H2).
+            subst.
+            pose proof (@atom_correct).
+            specialize (H4) with (1:= H2).
+            cleanup'.
+            subst.
+            cbn in Heqo.
+            unfold lookup, Enodes.lookup, lookup' in Heqo.
+            cbn in Heqo.
+            cbn .
+            rewrite H0.
+            simpl in *.
+            unfold add_enode in *.
+            destruct (n2id e) eqn:?.
+
+            unfold lookup, Enodes.lookup, lookup' in *.
+            destruct (PTree.get _ _) eqn:? in Heqo.
+            rewrite Heqo1 in *.
+            simpl in H1.
+            rewrite Heqm in H0.
+            simpl in H0.
+            rewrite Heqo1 in H0.
+            inversion H0.
+            simpl in*.
+            rewrite Heqo1 in *.
+            simpl in*.
+            rewrite PTree.gss in Heqo.
+            simpl in Heqo.
+            inversion Heqo.
+            destruct H.
+     
+            unfold lookup in no_args_eapp1_outside0.
+            simpl in no_args_eapp1_outside0.
+            specialize (no_args_eapp1_outside0 eid0 e0 e1).
+            unfold Enodes.lookup, lookup' in H1, no_args_eapp1_outside0.
+            rewrite Heqm in no_args_eapp1_outside0.
+            specialize (no_args_eapp1_outside0 H1).
+            subst.
+            cleanup'.
+            unfold find in H.
+            cbn in H.
+            unfold classIsCanonical, find in uf_id_outside0.
+            erewrite (uf_id_outside0 (max_allocated e)) in H.
+            erewrite uf_id_outside0 in H.
+            cbn in *.
+            lia.
+            lia.
+            lia.
+          }
+          rewrite H2.
+          destruct IHf2.
+          2:{
+            cleanup'.
+            pose proof (eq_preserve_type _ _ H3).
+            subst.
+            pose proof (@atom_correct).
+            specialize (H5) with (1:= H3).
+            cleanup'.
+            subst.
+            cbn in Heqo.
+            cbn in *.
+            unfold lookup, Enodes.lookup, lookup' in *.
+            cbn in Heqo.
+            cbn .
+            simpl in *.
+            clear H3.
+            unfold add_enode in *.
+            destruct (n2id e) eqn:?.
+
+            unfold lookup, Enodes.lookup, lookup' in *.
+            destruct (PTree.get _ _) eqn:? in H0.
+            rewrite Heqo1 in *.
+            simpl in *.
+            inversion H0.
+       
+            simpl in*.
+            rewrite Heqo1 in *.
+            simpl in*.
+
+            rewrite PTree.gss in Heqo0.
+            simpl in Heqo0.
+            inversion Heqo0.
+            destruct H.
+            unfold lookup in no_args_eapp1_outside0.
+            simpl in no_args_eapp1_outside0.
+            specialize (no_args_eapp1_outside0 eid0 e0 e1).
+            unfold Enodes.lookup, lookup' in H1, no_args_eapp1_outside0.
+            rewrite Heqm in no_args_eapp1_outside0.
+            specialize (no_args_eapp1_outside0 H1).
+            subst.
+            cleanup'.
+            unfold find in H3.
+            cbn in H3.
+            unfold classIsCanonical, find in uf_id_outside0.
+            erewrite (uf_id_outside0 (max_allocated e)) in H3.
+            erewrite uf_id_outside0 in H3.
+            cbn in *.
+            lia.
+            lia.
+            lia.
+          }
+          rewrite H3.
+          left.
+          unfold add_enode,lookup, Enodes.lookup, lookup' in *.
+          cbn in *.
+          destruct (n2id e).
+            unfold lookup, Enodes.lookup, lookup' in *.
+            destruct (PTree.get _ _) eqn:? in H0.
+            rewrite Heqo1 in *.
+            simpl in *.
+            inversion H0.
+          rewrite Heqo1 in *.
+          eauto.
+          inversion H1.
+          inversion H1.
+       }
+       Qed. 
+
+  Lemma lookup_add_not_there : forall {t} (g : Formula t) e node i {new_id2s},
+    invariant_egraph e ->
+    lookup e node = None ->
+    lookupF g e = Some i ->
+    lookupF g {| max_allocated := max_allocated e + 1;
+                 uf := uf e;
+                 n2id := add_enode (n2id e) (canonicalize e node) (max_allocated e);
+                 id2s := new_id2s |} =
+    Some i.
+    induction g.
+    {
+      intros.
+      cbn in *.
+      repeat auto_specialize.
+      destruct (lookupF _ _) eqn:? in H1.
+      2:{ inversion H1. }
+      destruct (lookupF _ _) eqn:? in H1.
+      2:{ inversion H1. }
+      repeat auto_specialize.
+      rewrite IHg1.
+      rewrite IHg2.
+
+      unfold lookup, Enodes.lookup, lookup'  in *.
+      simpl.
+      destruct node;eauto.
+      (* destruct (_&&_)eqn:?; eauto. *)
+      (* eapply Bool.andb_true_iff in Heqb. *)
+      cleanup'.
+      pose proof (@lookupF_canonical _ H _ _ _ Heqo).
+      pose proof (@lookupF_canonical _ H _ _ _ Heqo0).
+      unfold add_enode.
+      simpl in *.
+      destruct (n2id e) eqn:?.
+      rewrite H2 in H1.
+      simpl in *.
+      rewrite H3 in H1.
+      rewrite H2.
+      rewrite H3.
+
+        unfold lookup, Enodes.lookup, lookup' in *.
+      simpl in *.
+        destruct (PTree.get _ _) eqn:? in H1  .
+        2:{ inversion H1. }
+        destruct (PTree.get _ _) eqn:? in H1  .
+        2:{ inversion H1. }
+      assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
+      destruct H4. 
+      2:{
+        simpl in *.
+        unfold lookup, Enodes.lookup, lookup' in *.
+
+        destruct (PTree.get _ _) eqn:? in H0  .
+        rewrite Heqo3.
+        destruct (PTree.get _ _) eqn:? in H0  .
+        rewrite Heqo4.
+        rewrite Heqo1.
+        rewrite Heqo2.
+        eauto.
+        rewrite Heqo4.
+      erewrite PTree.gso;
+      eauto.
+      simpl in *.
+      setoid_rewrite Heqo1.
+      setoid_rewrite Heqo2.
+      eauto.
+      rewrite Heqo3.
+      erewrite PTree.gso;
+      eauto.
+      setoid_rewrite Heqo1.
+      setoid_rewrite Heqo2.
+      eauto.
+      }
+
+      subst.
+      rewrite Heqo1 in *.
+      destruct (PTree.get _ _) eqn:? in H0  .
+      inversion H0.
+      rewrite Heqo3.
+
+      erewrite PTree.gss.
+      simpl in *.
+      (* rewrite H2 iddn H0. *)
+      assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
+      destruct H4.
+      2:{
+        erewrite PTree.gso; eauto.
+        rewrite Heqo2.
+        eauto.
+      }
+      subst.
+      rewrite PTree.gss.
+      simpl.
+      inversion H1.
+      2:{  simpl in *.
+      destruct (n2id e) eqn:?.
+      unfold add_enode.
+      unfold Enodes.lookup, lookup'.
+      destruct (PTree.get _ _) eqn:? in H0  .
+      inversion H0.
+      rewrite Heqo1 in *.
+      eauto.  
+      }
+      (* Contradiction *)
+      congruence.
+    }
+    {
+      intros.
+      cbn in *.
+      unfold add_enode.
+      unfold lookup, Enodes.lookup, lookup'  in *.
+      cbn in *.
+      destruct (n2id e0) eqn:?.
+      destruct node; eauto.
+      cbn in *.
+      destruct (PTree.get _ _) eqn:? in H0.
+      rewrite Heqo.
+      destruct (PTree.get _ _) eqn:? in H0.
+      inversion H0.
+      rewrite Heqo0.
+      eauto.
+      rewrite Heqo.
+      eauto.
+      simpl.
+      destruct (n0 =? n) eqn:?; eauto.
+      eapply Pos.eqb_eq in Heqb.
+      subst.
+
+      destruct (PTree.get _ _) eqn:? in H1.
+      2:{ inversion H1. }
+      setoid_rewrite Heqo.
+      setoid_rewrite Heqo.
+      eauto.
+    
+      eapply Pos.eqb_neq in Heqb.
+      destruct (PTree.get n0 _) eqn:? .
+      destruct (PTree.get _ _) eqn:? .
+      eauto.
+      inversion H1.
+      rewrite PTree.gso.
+      eauto.
+      eauto.
+    }
+    Qed. 
+
+  (* On veut dire que si lookup = max_allocated, alors f2 est EAtom1 *)
+  Lemma found_high_in_updated : forall {t} (g : Formula t) e node i {new_id2s},
+    invariant_egraph e ->
+    lookupF g {| max_allocated := max_allocated e + 1;
+                 uf := uf e;
+                 n2id := add_enode (n2id e) (canonicalize e node) (max_allocated e);
+                 id2s := new_id2s |} =
+    Some i ->
+    (i < max_allocated e /\ lookupF g e = Some i ) \/
+    (i = max_allocated e /\
+    match g with
+    | Atom1 n t eq => EAtom1 n = canonicalize e node
+    | App1 f1 f2  =>
+      exists e1 e2,
+        lookupF  f1 e= Some e1 /\
+        lookupF  f2 e= Some e2 /\
+        EApp1 e1 e2 = canonicalize e node
+    end).
+    induction g.
+    {
+      intros e node i new_id2s inv.
+      simpl.
+      intros.
+      destruct (lookupF _ _) eqn:? in H.
+      2:{ inversion H. }
+      destruct (lookupF _ _) eqn:? in H.
+      2:{ inversion H. }
+      unfold add_enode in H.
+      repeat auto_specialize.
+      destruct IHg1.
+      destruct IHg2.
+      {
+        cleanup'.
+        rewrite H3, H2.
+        unfold lookup, Enodes.lookup, lookup' in *.
+        simpl in *.
+        destruct (n2id e) eqn:?.
+        pose proof (@lookupF_canonical _ inv _ _ _ H3) as can_n1.
+        pose proof (@lookupF_canonical _ inv _ _ _ H2) as can_n0.
+        rewrite can_n0, can_n1 in *.
+        cleanup'.
+        destruct node eqn:?.
+        2:{ left. split; eauto. simpl in *. destruct inv. 
+        
+        unfold lookup, Enodes.lookup, lookup' in nobody_outside0.
+        erewrite Heqm in nobody_outside0.
+        specialize (nobody_outside0 (EApp1 e0 e1) i).
+        simpl in nobody_outside0.
+        rewrite can_n0 in nobody_outside0.
+        rewrite can_n1 in nobody_outside0.
+        destruct (PTree.get _ _) in H.
+        specialize (nobody_outside0 H).
+        eauto.
+        eauto.
+        simpl in *.
+        destruct (PTree.get _ _) in H.
+        eauto.
+        eauto.
+        }
+        simpl in *.
+        destruct (PTree.get) eqn:? in H.
+        destruct (PTree.get) eqn:? in H.
+        destruct (PTree.get) eqn:? in H.
+        rewrite Heqo3.
+        destruct (PTree.get) eqn:? in H.
+        2:{ inversion H. }
+        2:{ inversion H. }
+        rewrite Heqo4.
+        { left.
+        split;eauto.
+        destruct inv.
+        unfold lookup, Enodes.lookup, lookup' in nobody_outside0.
+        rewrite Heqm in nobody_outside0.
+        specialize (nobody_outside0  (EApp1 e0 e1) i).
+        eapply nobody_outside0.
+        simpl.
+        rewrite can_n1.
+        rewrite can_n0.
+        rewrite Heqo3.
+        rewrite Heqo4.
+        congruence.
+        }
+        {
+        assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
+        destruct H4.
+        {
+          rewrite H4 in *.
+          rewrite PTree.gss in H.
+        assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
+        destruct H5.
+        {
+          rewrite <- H5 in *.
+          rewrite PTree.gss in H.
+          simpl in *.
+          rewrite Heqo1.
+          rewrite Heqo2.
+          right.
+          split;eauto.
+          destruct inv.
+          erewrite uf_id_outside0 in H; try lia.
+          congruence.
+        }
+        {
+          pose (nobody_outside e inv).
+          unfold lookup, Enodes.lookup, lookup' in l.
+          rewrite Heqm in l.
+          specialize (l (EApp1 e2 e1) i).
+          simpl in l.
+          rewrite PTree.gso in H; eauto.
+          simpl in *.
+          rewrite Heqo1; eauto.
+          destruct (PTree.get) eqn:? in H.
+          rewrite Heqo3.
+          left; split; eauto.
+          subst.
+          inversion H.
+          subst.
+          clear H.
+          rewrite Heqo1 in l.
+          rewrite can_n0 in l.
+          rewrite Heqo3 in l.
+          intuition lia.
+          inversion H.
+        }
+        }
+        {
+          rewrite PTree.gso in H; eauto.
+          destruct (PTree.get) eqn:? in H.
+          2:{ inversion H. }
+          setoid_rewrite Heqo3.
+          rewrite H.
+          left.
+          split ;eauto.
+          pose (nobody_outside e inv).
+          unfold lookup, Enodes.lookup, lookup' in l.
+          rewrite Heqm in l.
+          specialize (l (EApp1 e0 e1) i).
+          simpl in l.
+          rewrite can_n1 in l.
+          setoid_rewrite Heqo3 in l.
+          rewrite can_n0 in l.
+          specialize (l H).
+          eauto.
+        }
+        }
+        {
+        assert (e0 = find (uf e) e2 \/ e0 <> find (uf e) e2) by lia.
+        destruct H4.
+        {
+          rewrite H4 in *.
+          rewrite PTree.gss in H.
+        assert (e1 = find (uf e) e3 \/ e1 <> find (uf e) e3) by lia.
+        destruct H5.
+        {
+          rewrite <- H5 in *.
+          rewrite PTree.gss in H.
+          simpl in *.
+          rewrite Heqo1.
+          right.
+          split;eauto.
+          destruct inv.
+          erewrite uf_id_outside0 in H; try lia.
+          congruence.
+        }
+        {
+          rewrite PTree.gso in H; eauto.
+          simpl in *.
+          rewrite Heqo1; eauto.
+          inversion H.
+        }
+        }
+        {
+          rewrite PTree.gso in H; eauto.
+          destruct (PTree.get) eqn:? in H.
+          setoid_rewrite Heqo2.
+          rewrite H.
+          left.
+          split; eauto.
+          pose (nobody_outside e inv).
+          unfold lookup, Enodes.lookup, lookup' in l.
+          rewrite Heqm in l.
+          specialize (l (EApp1 e0 e1) i).
+          simpl in l.
+          rewrite can_n1 in l.
+          setoid_rewrite Heqo2 in l.
+          rewrite can_n0 in l.
+          specialize (l H).
+          eauto.
+          inversion H.
+        }
+      }
+    }
+    {
+      cleanup'.
+      subst.
+      destruct node; simpl in *.
+      2:{
+        pose (no_args_eapp1_outside e inv i e0 (max_allocated e)).
+        unfold lookup, Enodes.lookup, lookup' in *.
+        simpl in *.
+        destruct (n2id e) eqn:? in H.
+        rewrite Heqm in a.
+        destruct (PTree.get) eqn:? in H.
+        specialize (a H).
+        cleanup'.
+        erewrite (uf_id_outside) in H4; try intuition lia.
+        specialize (a H).
+        cleanup'.
+        erewrite (uf_id_outside) in H4; try intuition lia.
+      }
+      {
+        pose (no_args_eapp1_outside e inv i e0 (max_allocated e)).
+        unfold lookup, Enodes.lookup, lookup' in *.
+        simpl in *.
+        destruct (n2id e) eqn:? in H.
+        rewrite Heqm in a.
+        destruct (PTree.get) eqn:? in H.
+        destruct (PTree.get) eqn:? in H.
+        specialize (a H).
+        cleanup'.
+        erewrite (uf_id_outside) in H4; try intuition lia.
+        assert (find (uf e) e0 = find (uf e) e1 \/ find (uf e) e0 <> find (uf e) e1) by lia.
+        destruct H1.
+        {
+          rewrite H1 in *; clear H1.
+          rewrite PTree.gss in H.
+          rewrite Heqo1 in a.
+          assert (find (uf e) (max_allocated e) = find (uf e) e2 \/ find (uf e) (max_allocated e) <> find (uf e) e2) by lia.
+          destruct H1.
+          {
+            (* inconsistent *)
+            exfalso.
+            rewrite H1 in H.
+            rewrite PTree.gss in H.
+            inversion H.
+            clear a.
+            subst.
+            rewrite <- H1 in *.
+            rewrite Heqm in Heqo0.
+            clear H1.
+            unfold add_enode,Enodes.lookup, lookup' in Heqo0.
+            rewrite Heqo1 in Heqo0.
+            rewrite Heqo2 in Heqo0.
+            clear H.
+            destruct g2; cleanup'; simpl in *.
+            admit.
+            admit.
+        }
+        {
+          rewrite PTree.gso in H.
+          specialize (a H).
+          cleanup'.
+          erewrite (uf_id_outside) in H5; try intuition lia.
+          eauto.
+        }
+        (* assert (find (uf e) e0 = find (uf e) e1 \/ find (uf e) e0 <> find (uf e) e1) by lia.
+        destruct H1.
+        {
+          rewrite H1 in *; clear H1.
+          rewrite PTree.gss in H.
+          admit.
+        }
+        {
+          rewrite PTree.gso in H.
+          specialize (a H).
+          cleanup'.
+          erewrite (uf_id_outside) in H5; try intuition lia.
+          eauto.
+        } *)
+       }
+       admit.
+       admit.
+    }
+  }
+  admit.
+    Admitted.
+
+  Require Import Eqdep.
+  Lemma add_atom_safe : forall {t} n eq e ,
+    invariant_egraph e ->
+    let '(newe, _) := add_formula e (@Atom1 _ _ n t eq) in
+    invariant_egraph newe.
+    cbn.
+    intros.
+    destruct (lookup e (EAtom1 n )) eqn:?; eauto.
+    econstructor.
+    intros.
+    pose proof @lookup_update as updf.
+    specialize updf with (1:= H).
+    specialize updf with (1:= Heqo).
+    specialize updf with (1:= H0).
+    pose proof @lookup_update as updg.
+    specialize updg with (1:= H).
+    specialize updg with (1:= Heqo).
+    specialize updg with (1:= H1).
+    destruct updf.
+    {
+      destruct updg.
+      eapply H; eauto.
+      cleanup'.
+      pose H3.
+      eapply eq_preserve_type in e0.
+      subst.
+      pose proof (@atom_correct) as atomg.
+      specialize atomg with (1:= H3).
+      cleanup'.
+      subst.
+      cbn in *.
+      (* That should be absurd: eid = max allocated *)
+      {
+        unfold lookup,  Enodes.lookup, lookup' in H1, Heqo.
+        simpl in H1,Heqo.
+        unfold add_enode in H1.
+        unfold lookup,  Enodes.lookup, lookup' in H1.
+        destruct (n2id e) eqn:?.
+        destruct (PTree.get n t1) eqn:? in H1.
+        inversion Heqo.
+        congruence.
+        rewrite PTree.gss in H1.
+        inversion H1.
+        pose proof (nobody_lookupF_outside e H _ _ _ H2).
+        destruct H.
+        erewrite uf_id_outside0 in H5; try lia.
+      }
+    }
+    {
+      cleanup'.
+      pose H2.
+      eapply eq_preserve_type in e0.
+      subst.
+      pose proof (@atom_correct) as atomf.
+      specialize atomf with (1:= H2).
+      cleanup'.
+      (* destruct atomf. *)
+      subst.
+      cbn in H0.
+      unfold add_enode in H0.
+      unfold lookup, Enodes.lookup, lookup' in H0, Heqo.
+      cbn in H0, Heqo.
+      destruct (n2id e) eqn:?.
+      destruct (PTree.get n t1) eqn:? in H0.
+      {
+        rewrite Heqo0 in *.
+        inversion H0.
+        destruct updg.
+        pose proof (nobody_lookupF_outside e H).
+        specialize H5 with (1:= H3).
+        subst.
+        cbn in *.
+        inversion Heqo.
+        cleanup'.
+        pose proof (@atom_correct) as atomg.
+        specialize atomg with (1:= H3).
+        cleanup'.
+        subst.
+        simpl.
+        cbn in *.
+        rewrite x2 in x6.
+        inverseS x6.
+        eauto.
+      }
+      {
+        rewrite Heqo0 in *.
+        rewrite PTree.gss in H0.
+        inversion H0.
+        destruct updg.
+        pose proof (nobody_lookupF_outside e H).
+        specialize H5 with (1:= H3).
+        erewrite uf_id_outside in H4; eauto; lia.
+        cleanup'.
+        pose proof (@atom_correct) as atomg.
+        specialize atomg with (1:= H3).
+        cleanup'.
+        subst.
+        simpl.
+        cbn in *.
+        rewrite x2 in x6.
+        inverseS x6.
+        eauto.
+      }
+    }
+    {
+      cbn.
+      intros.
+      pose proof (nobody_outside e H).
+      unfold add_enode, lookup, Enodes.lookup, lookup' in H0,H1, Heqo.
+      simpl in H0.
+      subst.
+      destruct (n2id e) eqn:?.
+      destruct (PTree.get _ _) eqn:? in H0.
+      { 
+        simpl in *.
+        cbn in H0.
+        specialize (H1 a eid).
+        destruct a; simpl in *.
+        specialize H1 with (1:=H0).
+        lia.
+        specialize H1 with (1:=H0).
+        lia.
+      }
+      {
+        simpl in *.
+        cbn in H0.
+        specialize (H1 a eid).
+        destruct a; simpl in *.
+        specialize H1 with (1:=H0).
+        lia.
+        rewrite Heqo0 in *.
+        assert (n0 = n \/ n0 <> n) by lia .
+        destruct H2.
+        {
+          subst.
+          rewrite PTree.gss in H0.
+          inversion H0.
+          erewrite uf_id_outside; eauto;lia.
+        }
+        {
+          rewrite PTree.gso in H0;
+          intuition lia.
+        }
+      }
+    }
+    {
+      cbn.
+      intros.
+      pose proof (no_args_eapp1_outside e H).
+      unfold add_enode, lookup, Enodes.lookup, lookup' in H0,H1, Heqo.
+      simpl in H0.
+      subst.
+      destruct (n2id e) eqn:?.
+      simpl in *.
+      destruct (PTree.get _ _) eqn:? in H0.
+      { 
+        simpl in *.
+        cbn in H0.
+        specialize (H1 eid e1 e2).
+        specialize H1 with (1:=H0).
+        lia.
+      }
+      {
+        simpl in *.
+        cbn in H0.
+        specialize (H1 eid e1 e2).
+        specialize H1 with (1:=H0).
+        lia.
+      }
+    }
+    {
+      unfold n2idCanonical.
+      cbn.
+      unfold lookup, add_enode, Enodes.lookup, lookup' in *.
+      destruct H.
+        unfold n2idCanonical in sanely_assigned_lookup0.
+      unfold lookup, add_enode, Enodes.lookup, lookup' in sanely_assigned_lookup0.
+      intros.
+      unfold classIsCanonical.
+      cbn.
+      {
+        subst.
+        cleanup'.
+        destruct (n2id e) eqn:?.
+        destruct f eqn:?;
+        try auto_specialize;
+        unfold classIsCanonical in sanely_assigned_lookup0;
+        eauto.
+        {
+          simpl in *.
+          specialize (sanely_assigned_lookup0 f c).
+          subst f.
+          simpl in *.
+          destruct (PTree.get _ _) eqn:? in H.
+          {
+            rewrite Heqo0 in *.
+            inversion Heqo.
+          }
+          clear Heqo.
+          destruct (PTree.get _ _) eqn:? in H.
+          {
+          destruct (PTree.get _ _) eqn:? in H.
+          rewrite Heqo in *.
+          rewrite Heqo1 in *.
+          specialize (sanely_assigned_lookup0 H).
+          eauto.
+          inversion H.
+          }
+          inversion H.
+        }
+        {
+          simpl in *.
+          specialize (sanely_assigned_lookup0 f c).
+          subst f.
+          simpl in *.
+          destruct (PTree.get _ _) eqn:? in H.
+          {
+            rewrite Heqo0 in *.
+            inversion Heqo.
+          }
+          clear Heqo.
+          assert (n = n0 \/  n<>n0) by lia.
+          destruct H0.
+          {
+            subst.
+            rewrite PTree.gss in H.
+            simpl in *.
+            inversion H.
+            erewrite uf_id_outside0; try lia.
+            erewrite uf_id_outside0; try lia.
+          }
+          {
+            erewrite PTree.gso in H; eauto.
+          }
+        }
+      }
+    }
+    {
+      cbn.
+      intros.
+      destruct H.
+      eapply uf_id_outside0.
+      lia.
+    }
+    {
+      intros.
+      cbn in *.
+      change (lookupF f1
+                {|
+                  max_allocated := max_allocated e + 1;
+                  uf := uf e;
+                  n2id := add_enode (n2id e) (canonicalize e (EAtom1 n)) (max_allocated e);
+                  id2s :=
+                    PTree.set (max_allocated e)
+                      (max_allocated e, T t,
+                      (PTree.Nodes (PTree.set0 n n),
+                      PTree.empty (PTree.t (eclass_id * eclass_id)))) 
+                      (id2s e)
+                |} = Some c
+               ) in H0.
+      change ( lookupF f2
+       {|
+         max_allocated := max_allocated e + 1;
+         uf := uf e;
+         n2id := add_enode (n2id e) (canonicalize e (EAtom1 n)) (max_allocated e);
+         id2s :=
+           PTree.set (max_allocated e)
+             (max_allocated e, T t,
+             (PTree.Nodes (PTree.set0 n n),
+             PTree.empty (PTree.t (eclass_id * eclass_id)))) 
+             (id2s e)
+       |} = Some c) in H1.
+      pose proof (@found_high_in_updated _ _ _ _ _ _ H H0).
+      pose proof (@found_high_in_updated _ _ _ _ _ _ H H1).
+      destruct H2; destruct H3; cleanup'; try lia.
+      eapply wt_egraph; eauto.
+      {
+        destruct f1; destruct f2; cleanup';
+        cbn in *.
+        inversion H6.
+        inversion H6.
+        inversion H6.
+        inversion H5; inversion H4.
+        subst.
+        congruence.
+      } 
+    }
+    {
+        intros.
+        destruct H.
+        simpl in *.
+        assert ( c < max_allocated e \/ c = max_allocated e) by  lia.
+        destruct H.
+        erewrite wf_uf0; lia.
+        specialize (uf_id_outside0 c).
+        rewrite uf_id_outside0.
+        lia.
+        lia.
+    }
+    Qed.
+
+ (* Require Import Coq.Program.Equality. *)
+
+  Ltac cleanup := cbn in *;intros;
+  repeat match goal with
+  | H: _ /\ _ |- _ => destruct H
+  | H: _ <-> _ |- _ => destruct H
+  | H: exists _, _  |- _ => destruct H
+  | H: True  |- _ => clear H
+  | H : ?a = ?b, H' : ?a = ?b |- _ => clear H'
+  | H : ?P, H' : ?P |- _ =>
+    let t := type of P in
+    assert_succeeds(constr_eq t Prop);
+    clear H'
+  end.
+
+  Lemma lookupF_eqf : forall {t} (f g : Formula t) e i,
+    eqf f g = true ->
+    lookupF f e = Some i ->
+    lookupF g e = Some i.
+    induction f.
+    -
+     destruct g; cbn.
+      {
+        intros.
+        destruct (lookupF _ _) eqn:? in H0.
+        2:{ inversion H0. }
+        destruct (lookupF _ _) eqn:? in H0.
+        2:{ inversion H0. }
+        eapply Bool.andb_true_iff in H.
+        cleanup.
+        pose H.
+        eapply eq_preserve_type in e2.
+        inversion e2.
+        subst.
+        repeat auto_specialize.
+        rewrite IHf1.
+        rewrite IHf2.
+        eauto.
+      }
+      { intros.  inversion H.  }
+    -
+     destruct g; cbn.
+      (* { intros.  inversion H. } *)
+      { intros.  inversion H.  }
+      {
+        intros.
+        destruct t0.
+        destruct t1.
+        cbn in *.
+        destruct (dt_eq' T0 T1) eqn:?; subst.
+        eapply Pos.eqb_eq in H.
+        subst.
+        eauto.
+        inversion H.
+      }
+  Qed.
+
+  Lemma lookup_update_app1 :
+  forall {t'} (f'  : Formula t') {t1 t3}
+   newe
+   (f1 : Formula t3) (f2 : Formula t1)
+   e1 e3
+   eid0 {new_id2s},
+    (* lookupF (App2 f1 f2 f3) newe = None ->  *)
+    lookupF f1 newe = Some e1 ->
+    lookupF f2 newe = Some e3 ->
+    invariant_egraph newe ->
+    lookupF f' {| max_allocated := max_allocated newe + 1;
+                 uf := uf newe;
+                 n2id :=  add_enode (n2id newe) (EApp1 e1 e3) (max_allocated newe);
+                 id2s := new_id2s |}
+    = Some eid0 ->
+    lookupF f' newe = Some eid0 \/
+    (exists  (f'1 : Formula (t1 ~> t')) (f'2 : Formula t1)  ,
+      lookupF f'1 newe = Some e1 /\
+      lookupF f'2 newe = Some e3 /\
+      eqf f' (App1 f'1 f'2) = true /\
+      eid0 = max_allocated newe).
+      Admitted.
+      (* induction f'.
+      2:{
+        intros.
+        cbn in *.
+        left.
+        unfold lookup.
+        unfold add_enode in H2.
+        cbn in *; eauto.
+      }
+      {
+        intros.
+        cbn in H2.
+        specialize (IHf'1) with (1:= H).
+        specialize (IHf'1) with (1:= H0).
+        specialize (IHf'1) with (1:= H1).
+        (* specialize (IHf'1) with (1:= H2). *)
+        specialize (IHf'2) with (1:= H).
+        specialize (IHf'2) with (1:= H0).
+        specialize (IHf'2) with (1:= H1).
+        (* specialize (IHf'2) with (1:= H2). *)
+        repeat auto_specialize.
+        cbn.
+        destruct (lookupF f'1 _) eqn:? in H2.
+        2:{
+          inversion H2.
+        }
+        destruct (lookupF f'2 _) eqn:? in H2.
+        2:{
+          inversion H2.
+        }
+        repeat auto_specialize.
+        destruct IHf'1.
+        rewrite H3.
+        destruct IHf'2.
+        rewrite H4.
+        {
+          unfold update_map in H2.
+          cbn in H2.
+          subst.
+          destruct (_&&_) eqn:? in H2.
+          cbn in H2.
+          pose proof (lookupF_canonical newe ) as canonicalLookup.
+          auto_specialize.
+          destruct H1.
+          eapply Bool.andb_true_iff in Heqb.
+          cleanup'.
+          eapply Nat.eqb_eq in H1.
+          eapply Nat.eqb_eq in H5.
+          pose (canonicalLookup _ f1 e1) as e1_c.
+          pose (canonicalLookup _ f2 e3) as e3_c.
+          pose (canonicalLookup _ f'1 n) as e_c.
+          pose (canonicalLookup _ f'2 n0) as e0_c.
+          do 4 auto_specialize.
+          rewrite e1_c in H1.
+          rewrite e_c in H1.
+          rewrite e3_c in H5.
+          rewrite e0_c in H5.
+          subst.
+          pose proof (wt_egraph0 _ _ _ _ _ H H3) as luf1.
+          pose proof (wt_egraph0 _ _ _ _ _ H0 H4) as luf2.
+          cleanup'.
+          subst.
+          right.
+          eexists; eexists.
+          split.
+          exact H3.
+          split.
+          exact H4.
+          split.
+          rewrite !eqf_refl.
+          eauto.
+          inversion H2.
+          eauto.
+          eauto.
+        }
+        {
+          cleanup.
+          rename H7 into reskj.
+          unfold update_map in H2.
+          subst.
+          match type of Heqo0 with
+          | lookupF ?a ?b = Some ?c =>
+            assert (lookupF (App1 x x0) b = Some c)
+          end.
+          eapply lookupF_eqf; eauto.
+          destruct (_ && _) eqn:? in H2.
+          (* Destruction of H4 leads to one similar case for the false branch.  *)
+          2:{
+            destruct H1.
+            specialize no_args_eapp1_outside0 with (1:= H2).
+            cleanup'.
+            unfold classIsCanonical in uf_id_outside0.
+            unfold find in H8, uf_id_outside0; subst; cbn in *.
+            erewrite uf_id_outside0 with (a := max_allocated newe) in H8; lia.
+          }
+          pose proof (lookupF_canonical newe ) as canonicalLookup.
+          specialize (canonicalLookup H1).
+          eapply Bool.andb_true_iff in Heqb.
+          destruct Heqb.
+          eapply Nat.eqb_eq in H8, H9.
+          pose (canonicalLookup _ f2 e3) as e3_c.
+          auto_specialize.
+          rewrite e3_c in H9.
+          pose proof (nobody_lookupF_outside newe H1 _ _ _ H0).
+          destruct H1.
+          unfold classIsCanonical in uf_id_outside0.
+          unfold find in H9, uf_id_outside0.
+          erewrite uf_id_outside0 in H9; cbn; try lia.
+        }
+        {
+          cleanup.
+          rename H6 into reskj.
+          subst.
+          match type of Heqo with
+          | lookupF ?a ?b = Some ?c =>
+            assert (lookupF (App1 x x0) b = Some c)
+          end.
+          eapply lookupF_eqf; eauto.
+          destruct (_ && _) eqn:? in H2.
+          (* Destruction of H4 leads to one similar case for the false branch.  *)
+          2:{
+            destruct H1.
+            specialize no_args_eapp1_outside0 with (1:= H2).
+            cleanup'.
+            unfold classIsCanonical in uf_id_outside0.
+            unfold find in H1, uf_id_outside0; subst; cbn in *.
+            erewrite uf_id_outside0 with (a := max_allocated newe) in H1; lia.
+          }
+          pose proof (lookupF_canonical newe ) as canonicalLookup.
+          specialize (canonicalLookup H1).
+          eapply Bool.andb_true_iff in Heqb.
+          destruct Heqb.
+          eapply Nat.eqb_eq in H7, H8.
+          pose (canonicalLookup _ f1 e1) as e1_c.
+          auto_specialize.
+          rewrite e1_c in H7.
+          pose proof (nobody_lookupF_outside newe H1 _ _ _ H3).
+          destruct H1.
+          unfold classIsCanonical in uf_id_outside0.
+          unfold find in H7, uf_id_outside0.
+          erewrite uf_id_outside0 in H7; cbn; try lia.
+        }
+      }
+      Qed. *)
+
+
+  Lemma add_app1_safe: forall {t t1} e
+  (f1 : Formula (t1 ~> t))
+   (f2 : Formula t1)
+    e1 e3 {new_id2s},
+    invariant_egraph e ->
+    lookupF f1 e = Some e1 ->
+    lookupF f2 e = Some e3 ->
+    invariant_egraph
+      {| max_allocated := max_allocated e + 1;
+         uf := uf e;
+         n2id := add_enode (n2id e) (EApp1 e1 e3) (max_allocated e);
+         id2s := new_id2s |}.
+    Admitted.
+    (* intros.
+    econstructor.
+    intros.
+    pose proof @lookup_update_app1 as updf.
+    (* specialize updf with (1:= H3). *)
+    specialize updf with (1:= H0).
+    specialize updf with (1:= H1).
+    (* specialize updf with (1:= H2). *)
+    specialize updf with (1:= H).
+    specialize updf with (1:= H2).
+    pose proof @lookup_update_app1 as updg.
+    (* specialize updg with (1:= H3). *)
+    specialize updg with (1:= H0).
+    specialize updg with (1:= H1).
+    (* specialize updg with (1:= H2). *)
+    specialize updg with (1:= H).
+    specialize updg with (1:= H3).
+    destruct updf.
+    {
+      destruct updg.
+      eapply H; eauto.
+      cleanup'.
+      pose proof (nobody_lookupF_outside _ H) as nobody_outside0.
+      specialize (nobody_outside0) with (1:= H4).
+      lia.
+    }
+    {
+      cleanup'.
+      pose H6.
+      eapply eq_preserve_type in e0.
+      subst.
+      destruct updg.
+      {
+         pose proof (nobody_lookupF_outside _ H) as nobody_outside0.
+         specialize (nobody_outside0) with (1:= H7).
+         lia.
+      }
+      {
+        cleanup.
+        transitivity (interp_formula ctx (App1 x x0)).
+        eapply eq_correct.
+        eauto.
+        transitivity (interp_formula ctx (App1 x1 x2 )).
+        2:{
+          symmetry.
+          eapply eq_correct.
+          eauto.
+        }
+        simpl.
+        assert (interp_formula ctx x = interp_formula ctx x1).
+        eapply H; eauto.
+        assert (interp_formula ctx x0 = interp_formula ctx x2).
+        eapply H; eauto.
+        rewrite H11.
+        rewrite H12.
+        eauto.
+      }
+    }
+    {
+      cbn.
+      intros.
+      destruct a.
+      cbn in *.
+      destruct (_ && _) eqn:? in H2.
+      inversion H2; subst; lia.
+      destruct H.
+      repeat auto_specialize.
+      unfold find in no_args_eapp1_outside0.
+      cleanup'.
+      lia.
+      destruct H.
+      repeat auto_specialize.
+      lia.
+    }
+    {
+      unfold n2idCanonical.
+      cbn.
+      intros.
+
+      destruct (_ && _) eqn:?.
+      {
+        eapply Bool.andb_true_iff in Heqb.
+        cleanup'.
+        eapply Nat.eqb_eq in H4.
+        eapply Nat.eqb_eq in H3.
+        unfold find in *.
+        pose proof (@lookupF_canonical _ H  _ _ _ H0).
+        pose proof (@lookupF_canonical _ H  _ _ _ H1).
+        rewrite H5 in H3.
+        rewrite H6 in H4.
+        rewrite <- H3.
+        rewrite <- H4.
+        pose proof (nobody_lookupF_outside _ H).
+        split; erewrite H7; eauto; lia.
+      }
+      subst.
+      destruct H.
+      unfold n2idCanonical in sanely_assigned_lookup0.
+      cleanup'.
+      try auto_specialize;
+      unfold classIsCanonical in sanely_assigned_lookup0;
+      eauto.
+      specialize (no_args_eapp1_outside0 _ _ _ H2).
+      cleanup'.
+      rewrite H.
+      rewrite H3.
+      cbn; lia.
+    }
+    {
+      unfold n2idCanonical.
+      cbn.
+      intros.
+      destruct f.
+      destruct (_ && _) eqn:?.
+      {
+        inversion H2.
+        subst.
+        cbn.
+        destruct H.
+        specialize (uf_id_outside0 (max_allocated e)).
+        unfold classIsCanonical in *.
+        cbn in *.
+        unfold find in uf_id_outside0.
+        erewrite uf_id_outside0; try lia.
+      }
+      {
+        unfold classIsCanonical in *.
+        cbn in *.
+        destruct H.
+        unfold n2idCanonical in *.
+        specialize (sanely_assigned_lookup0 _ _ H2).
+        eauto.
+      }
+      {
+        unfold classIsCanonical in *.
+        cbn in *.
+        destruct H.
+        unfold n2idCanonical in *.
+        specialize (sanely_assigned_lookup0 _ _ H2).
+        eauto.
+      }
+    }
+    {
+      cbn.
+      intros.
+      destruct H.
+      eapply uf_id_outside0.
+      lia.
+    }
+    {
+      intros.
+      cbn in *.
+      pose proof (@found_high_in_updated _ _ _ _ _ _ H H2).
+      pose proof (@found_high_in_updated _ _ _ _ _ _ H H3).
+      destruct H4; destruct H5; cleanup'; try lia.
+      eapply wt_egraph; eauto.
+      {
+        destruct f0; destruct f3; cleanup';
+        cbn in *.
+        2:{ inversion H6. }
+        2:{ inversion H7. }
+        2:{ inversion H7. }
+        inversion H8; inversion H10.
+        subst.
+        destruct H.
+        pose proof (@wt_egraph0 _ _ _ _ _ H7 H5).
+        inversion H.
+        eauto.
+      }
+    }
+{
+        intros.
+        destruct H.
+        simpl in *.
+        assert ( c < max_allocated e \/ c = max_allocated e) by  lia.
+        destruct H.
+        erewrite wf_uf0; lia.
+        specialize (uf_id_outside0 c).
+        rewrite uf_id_outside0.
+        lia.
+        lia.
+    }
+    Qed. *)
+
+    (* Another exam exercise:
+     In this case we need to be careful to not make a statement too general
+     that's something to have the student look for as well. *)
+  Theorem lookup_already_there' :
+    forall t  (f : Formula t) (e : egraph)  (e2 : eclass_id),
+    lookupF f e = Some e2 ->
+    add_formula e f = (e, e2).
+    induction f.
+    {
+      intros.
+      cbn in H.
+      destruct (lookupF _ _) eqn:? in H.
+      2:{ inversion H.  }
+      destruct (lookupF _ _) eqn:? in H.
+      2:{ inversion H.  }
+      cbn.
+      destruct (add_formula _ _) eqn:?.
+      pose proof (IHf1 _ _ Heqo).
+      assert (e0 = e4) by congruence.
+      assert (e = e3) by congruence.
+      subst.
+      destruct (add_formula e3 f2) eqn:?.
+      pose proof (IHf2 _ _ Heqo0).
+      cleanup'.
+      assert (e0 = e1) by congruence.
+      assert (e = e3) by congruence.
+      subst.
+      subst.
+      rewrite H.
+      eauto.
+    }
+    {
+      intros.
+      cbn in *.
+      rewrite H.
+      eauto.
+    }
+    Qed.
+
+  Lemma add_formula_safe : forall {t} (f : term t) e ,
+    invariant_egraph e ->
+    let '(newe, newal) := add_formula e f in
+    invariant_egraph newe /\
+    lookupF f newe = Some newal /\
+    (forall t' (g : Formula t') old,
+      (lookupF g e = Some old ->
+       lookupF g newe = Some old) ).
+       (* Admitted. *)
+    induction f.
+    2:{
+      intros.
+      pose proof @add_atom_safe.
+      destruct (add_formula e0 _) eqn:?.
+      repeat auto_specialize.
+      specialize (H0 _ n e).
+      rewrite Heqp in H0.
+      eauto.
+      remember (Atom1 n t0 e).
+      cbn in *.
+      assert (lookupF f e1 = Some e2).
+      subst f.
+      cbn in *.
+      destruct (lookup e0 _) eqn:? in Heqp.
+      {
+      inversion Heqp.
+      subst.
+      eauto.
+      }
+      {
+      inversion Heqp.
+      subst.
+      cbn.
+      unfold lookup, Enodes.lookup, lookup' in Heqo |-*. 
+      simpl in *.
+      clear Heqp.
+      unfold add_enode. 
+      unfold lookup, Enodes.lookup, lookup'. 
+      destruct (n2id e0).
+      destruct (PTree.get _ _) eqn:? in Heqo.
+      inversion Heqo.
+      rewrite Heqo0.
+      rewrite PTree.gss.
+      simpl.
+      destruct H.
+      erewrite uf_id_outside0   by lia.
+      eauto.
+      }
+      split; eauto.
+      split; eauto.
+      intros.
+      subst.
+      simpl in *.
+      destruct (lookup e0 _) eqn:? in Heqp.
+      {
+        inversion Heqp.
+        subst; eauto.
+      }
+      {
+        inversion Heqp.
+        subst.
+        cbn in H1.
+        pose proof @lookup_add_not_there.
+        assert (lookup e0 (EAtom1 n ) = None).
+        unfold lookup.
+        cbn in *; eauto.
+        epose proof (H3 _ _ _ _ _ _ H H4 H2 ).
+        eauto.
+      }
+    }
+    {
+      intros.
+      pose proof (IHf1 _ H ).
+      destruct (add_formula e f1) eqn:?.
+      cleanup'.
+      pose proof (IHf2 _ H0).
+      destruct (add_formula e0 f2) eqn:?.
+      cleanup'.
+      cleanup'.
+      cbn - [eqf lookupF].
+      rewrite Heqp.
+      rewrite Heqp0.
+      (* destruct (lookupF (App1 f1 f2) _) eqn:?; eauto. *)
+      destruct (lookup e2 (EApp1 e1 e3)) eqn:?; eauto.
+      2:{
+        split.
+        {
+          pose lookupF_canonical.
+          specialize c with (2:= H4). 
+          specialize (c H3).
+          rewrite c.
+          specialize H5 with (1:= H1). 
+          pose lookupF_canonical.
+          specialize c0 with (2:= H5). 
+          specialize (c0 H3).
+          rewrite c0.
+          pose proof @add_app1_safe; eauto.
+        }
+        split.
+        {
+          cbn.
+          simpl in *.
+          epose proof (@lookup_add_not_there _ f2 e2 (EApp1 e1 e3 ) e3 _ H3 Heqo H4).
+          epose proof (@lookup_add_not_there _ f1 e2 (EApp1 e1 e3 ) e1 _ H3 Heqo (H5 _ _ _ H1)).
+          rewrite H7.
+          rewrite H6.
+          unfold lookup, Enodes.lookup, lookup', add_enode in Heqo |-*.
+          simpl.
+          destruct (n2id e2) eqn:?.
+          pose proof (H5 _ _ _ H1).
+          pose proof (@lookupF_canonical _ H3 _ _ _ H8) as n_cano.
+          pose proof (@lookupF_canonical _ H3 _ _ _ H4) as n0_cano.
+          rewrite n_cano, n0_cano; eauto.
+          simpl in *.
+          unfold lookup, Enodes.lookup, lookup', add_enode in Heqo |-*.
+          erewrite n_cano in Heqo.
+          destruct (PTree.get _ _) eqn:? in Heqo.
+          rewrite Heqo0 in *.
+          erewrite n0_cano in Heqo.
+          destruct (PTree.get _ _) eqn:? in Heqo.
+          inversion Heqo.
+          rewrite Heqo1.
+          rewrite PTree.gss.
+          rewrite PTree.gss.
+          simpl.
+          destruct H3.
+          erewrite uf_id_outside0   by lia.
+          intuition lia. 
+          rewrite Heqo0.
+          rewrite PTree.gss.
+          rewrite PTree.gss.
+          simpl.
+          destruct H3.
+          erewrite uf_id_outside0   by lia.
+          intuition lia. 
+        }
+        {
+          intros.
+          pose proof  (H2 _ _ _ H6) as gint1.
+          pose proof  (H5 _ _ _ gint1) as gint2.
+          epose proof (@lookup_add_not_there _ g e2 (EApp1 e1 e3 ) old _ H3 Heqo gint2).
+          eauto.
+        } 
+      }
+      {
+        split.
+        {
+          pose proof @add_app1_safe; eauto.
+        }
+        split.
+        {
+          cbn.
+          rewrite H4.
+          pose proof (H5 _ _ _ H1).
+          rewrite H6.
+          eauto.
+        }
+        {
+          intros.
+          eapply H5.
+          eapply H2.
+          eauto.
+        }
+      }
+    }
+    Qed. 
+
+    Fixpoint substF {t t'} (e : egraph) (f : Formula t)
+    (from : eclass_id)
+    (to : Formula t') : Formula t.
+    unshelve refine (let sub := _ in _).
+    2:{
+      destruct f.
+      {
+        pose (substF _ _ e f1 from to) as f'1 .
+        pose (substF _ _ e f2 from to) as f'2 .
+        exact (App1 f'1 f'2).
+      }
+      {
+        exact (Atom1 n t0 e0).
+      }
+    }
+    cbn in sub.
+    destruct (dt_eq' t' t).
+        {
+          subst.
+          destruct (lookupF sub e) .
+          {
+            destruct (Pos.eqb e0 from).
+            {
+              exact to.
+            }
+            exact sub.
+          }
+          {
+            exact sub.
+          }
+        }
+        {
+          exact sub.
+        }
+    Defined.
+
+    Lemma merge_helper : forall e,
+    invariant_egraph e ->
+    forall newe {t} (f1 : Formula t) (f2 : Formula t)
+    (e1 e2 : eclass_id),
+    lookupF f1 e = Some e1 ->
+    lookupF f2 e = Some e2 ->
+    merge e e1 e2 = newe ->
+    forall  {t'} (f : Formula t') (e3 : eclass_id),
+    lookupF f newe = Some e3 ->
+    lookupF (substF e f e1 f2) e = Some e3.
+    Admitted.
+    (* intros.
+    revert dependent f2.
+    revert dependent f1.
+    revert dependent e1.
+    revert dependent e2.
+    revert dependent e3.
+    revert dependent f.
+    induction f.
+    {
+      intros.
+      (* pose proof H3 as init. *)
+      simpl in H3.
+      destruct (lookupF _ _) eqn:? in H3.
+      2:{ inversion H3. }
+      destruct (lookupF _ _) eqn:? in H3.
+      2:{ inversion H3. }
+
+      repeat auto_specialize.
+      subst.
+
+      (* H3 represente la classe dans l'egraph merge *)
+      cbn in *.
+      destruct (dt_eq' t td).
+      2:{
+        simpl.
+        rewrite IHf1.
+        rewrite IHf2.
+        pose proof (@lookupF_canonical e H ) as H2.
+        unfold merge,lookup, merge_n2id, Enodes.lookup, lookup' in H3 .
+        simpl in H3.
+        destruct (n2id e) eqn:? in H3.
+        (* rewrite Heqm.
+        simpl.
+       
+        (* erewrite (H2 _ _ _ IHf2) in H3;eauto. *)
+        (* 2:{ inversion H3.  } *)
+        pose proof (@lookupF_canonical _ H _ _ _ IHf1) as n_cano.
+        pose proof (@lookupF_canonical _ H _ _ _ IHf2) as n2_cano.
+        pose proof (@lookupF_canonical _ H _ _ _ H0) as n3_cano.
+        pose proof (@lookupF_canonical _ H _ _ _ H1) as n4_cano.
+        rewrite n3_cano in H3 .
+        rewrite n4_cano in H3.
+        rewrite n3_cano in H3.
+        rewrite n2_cano.
+        rewrite n_cano.
+         *)
+        (* destruct (Nat.eq_dec _ _); inversion H3; subst; eauto. *)
+        assert (lookupF (App1 (substF e f1 e1 f3) (substF e f2 e1 f3)) e = Some e1).
+        cbn.
+        rewrite IHf1.
+        rewrite IHf2.
+
+        unfold merge,lookup, merge_n2id, Enodes.lookup, lookup' in H3 |-*.
+        rewrite Heqm.
+        simpl.
+        destruct (PTree.get _ _) eqn:? in H3.
+        2:{ inversion H3. }
+        destruct (PTree.get _ _) eqn:? in H3.
+        2:{ inversion H3. }
+        simpl. unfold union,find in *|-.
+        admit.
+         (* rewrite n_cano.
+        rewrite n2_cano.
+        eauto. *)
+        destruct H.
+        specialize (wt_egraph0 _ _ _ _ _ H4 H0).
+        contradiction n; eauto.
+      }
+      {
+        destruct e5.
+        cbn in *.
+        rewrite IHf1, IHf2.
+        pose proof (@lookupF_canonical e H ) as H2.
+        epose (H2 _ _  _ IHf2).
+        admit.
+         (* in H3;eauto.
+        destruct (n2id _ _) eqn:? in H3.
+        2:{ inversion H3.  }
+        {
+          pose proof (@lookupF_canonical _ H _ _ _ IHf1) as n_cano.
+          rewrite n_cano in Heqo1.
+          destruct (Nat.eq_dec _ _) eqn:? in H3.
+          subst.
+          rewrite Heqo1.
+          rewrite Heqs.
+          inversion H3; subst; eauto.
+          inversion H3; subst; eauto.
+          rewrite Heqo1.
+          rewrite Heqs.
+          simpl.
+          rewrite IHf1.
+          rewrite IHf2.
+          eauto.
+        } *)
+      }
+    }
+  {
+      intros.
+      (* pose proof H3 as init. *)
+      simpl in H3.
+      simpl.
+      subst.
+
+      (* H3 represente la classe dans l'egraph merge *)
+      simpl in *.
+      destruct t0.
+      cbn.
+      destruct (dt_eq' t T0).
+      2:{
+        simpl.
+        (* unfold lookup, Enodes.lookup, lookup', merge, merge_n2id in *. *)
+        simpl in *.
+        eauto.
+        destruct (n2id e ) eqn:? in H3;
+        unfold lookup;
+        cbn.
+        rewrite Heqm.
+        (* 2:{ inversion H3.  }
+        destruct (Nat.eq_dec _ _ );
+        inversion H3; subst; eauto. *)
+        assert (lookupF (Atom1 n {| T:=T0; state:=state0 |} e0) e = Some e1) .
+        cbn; unfold lookup; cbn; eauto.
+        unfold Enodes.lookup, lookup'.
+        rewrite Heqm.
+        admit.
+        destruct H.
+        specialize (wt_egraph0 _ _ _ _ _  H2 H0).
+        contradiction n0; eauto.
+      }
+      {
+        destruct e4.
+        cbn in *.
+        unfold lookup,Enodes.lookup, lookup',merge  in *.
+        simpl in*.
+        destruct (n2id e) eqn:?.
+        unfold lookup in *.
+
+        unfold merge_n2id, lookup,Enodes.lookup, lookup',merge  in *.
+        admit.
+        (* 2:{ inversion H3.  }
+        {
+          cbn in *.
+          rewrite Heqo.
+          destruct (Nat.eq_dec _ _) eqn:? in H3.
+          rewrite Heqs.
+          inversion H3; subst; eauto.
+          rewrite Heqs.
+          simpl.
+          inversion H3; subst; eauto.
+        } *)
+      }
+    } *)
+       (* Qed. *)
+
+    Lemma subst_helper :
+    forall {t'} (f : Formula t'),
+    forall {t} (f1 : Formula t) (f2 : Formula t) e (e1 : eclass_id),
+    invariant_egraph e ->
+    interp_formula ctx f1 = interp_formula ctx f2 ->
+    lookupF f1 e = Some e1 ->
+    interp_formula ctx f = interp_formula ctx (substF e f e1 f2).
+    Ltac t := subst; simpl; eauto.
+    Admitted.
+    (* induction f.
+    - intros.
+      repeat auto_specialize.
+      simpl.
+      rewrite  IHf1, IHf2.
+      simpl.
+      destruct (dt_eq' t0 td) eqn:?.
+      2:{
+        simpl.
+        eauto.
+      }
+      destruct e0.
+      simpl.
+      remember (eq_rect_r  _ _ _ ).
+      cbn in Heqy.
+      remember (y f3).
+      subst y.
+      destruct (lookupF _ _) eqn:? in Heqf; try solve[ t ].
+      destruct (lookupF _ _) eqn:? in Heqf; try solve[ t ].
+      destruct (n2id _ _) eqn:? in Heqf; try solve [ t ].
+      destruct (Nat.eq_dec _ _) eqn:? in Heqf; try solve [ t ].
+      subst.
+      rewrite <- H0.
+      destruct H.
+      erewrite (correct0 _ f0 (App1 (substF e f1 e1 f3) (substF e f2 e1 f3))).
+      eauto.
+      eauto.
+      simpl.
+      rewrite Heqo, Heqo0.
+      eauto.
+    -
+      intros.
+      simpl.
+      destruct t0.
+      cbn in *.
+      destruct (dt_eq' t T0) eqn:?.
+      2:{
+        simpl.
+        eauto.
+      }
+      destruct e2.
+      remember (eq_rect_r _  _ _).
+      remember (y f2).
+      subst y.
+      cbn in *.
+      unfold lookup in *.
+      cbn in *.
+      destruct (n2id _ _) eqn:? in Heqf; try solve [ t ].
+      destruct (Nat.eq_dec _ _) eqn:? in Heqf; try solve [ t ].
+      subst.
+      rewrite <- H0.
+      destruct H.
+      erewrite (correct0 _ f1 (Atom1 n {| T:= t; state := state0 |} e)).
+      eauto.
+      eauto.
+      simpl.
+      unfold lookup; cbn.
+      eauto.
+    Qed. *)
+
+Lemma apply_add_formula : forall {t} (f : Formula t) e newe,
+    invariant_egraph e ->
+    (fst (add_formula e f)) = newe ->
+    invariant_egraph newe.
+    pose proof @add_formula_safe.
+    intros.
+    repeat auto_specialize.
+    specialize (H _ f).
+    destruct (add_formula e f) eqn:?;
+    cleanup'; eauto.
+    cbn in H1; subst; eauto.
+Qed.
+Theorem apply_merge : forall {t} (e newe: egraph) (f g : Formula t),
+    invariant_egraph e ->
+    interp_formula ctx f = interp_formula ctx g ->
+    (fst (fst (mergeF e f g)) = newe) ->
+    invariant_egraph newe.
+    pose proof @merge_preserve.
+    intros.
+    repeat auto_specialize.
+    destruct (mergeF _ _ _) eqn:?;
+    cleanup'; eauto.
+    cbn in H2; subst; eauto.
+    destruct p.
+    eauto.
+Qed.

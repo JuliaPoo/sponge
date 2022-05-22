@@ -762,6 +762,136 @@ Section egraphs.
     lookup e f = Some c ->
     classIsCanonical e c.
 
+End egraphs.
+End Temp.
+
+Require Coq.Lists.List. Import List.ListNotations.
+Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
+Require Import Coq.micromega.Lia.
+Require Import Coq.Logic.PropExtensionality.
+
+Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
+Module PropLemmas.
+  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
+  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
+  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
+  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
+End PropLemmas.
+
+
+Section WithLib.
+  Context (word: Type)
+          (ZToWord: Z -> word)
+          (unsigned: word -> Z)
+          (wsub: word -> word -> word)
+          (wadd: word -> word -> word)
+          (wopp: word -> word).
+
+  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
+          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
+          (wadd_comm: forall a b, wadd a b = wadd b a)
+          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
+
+  (* Preprocessing: *)
+  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
+
+  (* With sideconditions: *)
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+
+  Context (mem: Type)
+          (word_array: word -> list word -> mem -> Prop)
+          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
+
+  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
+
+  Ltac pose_list_lemmas :=
+    pose proof (@List.firstn_cons word) as firstn_cons;
+    pose proof (@List.skipn_cons word) as skipn_cons;
+    pose proof (@List.app_comm_cons word) as app_cons;
+    pose proof (@List.firstn_O word) as firstn_O;
+    pose proof (@List.skipn_O word) as skipn_O;
+    pose proof (@List.app_nil_l word) as app_nil_l;
+    pose proof (@List.app_nil_r word) as app_nil_r.
+
+  Ltac pose_prop_lemmas :=
+    pose proof PropLemmas.and_True_l as and_True_l;
+    pose proof PropLemmas.and_True_r as and_True_r;
+    pose proof PropLemmas.eq_eq_True as eq_eq_True.
+
+  Definition lipstick {A:Type} {a:A} := a.
+
+  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
+                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
+        (f g: word -> word) (b: word)
+        (HL: length vs = 3%nat)
+        (H : sep (word_array a
+          (List.firstn
+             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs) ++
+           [w2] ++
+           List.skipn
+             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs))) R m),
+      f (wadd b a) = g b /\
+      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
+      f (wadd b a) = f (wadd a b).
+  Proof.
+    intros.
+
+    pose_list_lemmas.
+    pose_prop_lemmas.
+
+    intros.
+    specialize (eq_eq_True word).
+
+    (* Make problems simpler by only considering one combination of the booleans,
+       but it would be nice to treat all of them at once *)
+    replace cond0_0 with false in * by admit.
+    replace cond0 with false in * by admit.
+
+    (* Make problem simpler by not requiring side conditions: since we know the
+       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
+       be on cons without sideconditions rather than on app with side conditions
+       on length *)
+    destruct vs as [|v0 vs]. 1: discriminate HL.
+    destruct vs as [|v1 vs]. 1: discriminate HL.
+    destruct vs as [|v2 vs]. 1: discriminate HL.
+    destruct vs as [|v3 vs]. 2: discriminate HL.
+    clear HL.
+    cbn.
+    (* cbn in H. <-- We don't do this cbn because now that we've done the above
+       destructs, cbn can do much more than it usually would be able to do. *)
+
+    (* Preprocessing *)
+    rewrite wsub_def in *.
+    clear wsub_def.
+    apply PropLemmas.eq_True in H.
+
+    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
+    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
+
+    (* Constant propagation rules, manually chosen to make things work,
+       TODO how to automate? *)
+    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
+
+  Ltac reify_interp_roundtrip h := 
+   let t := type of h in
+   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
+   let tname := fresh "tm" in
+   pose tmap as tname;
+   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
+   (* idtac "tmap" tmap "constmap" cmap; *)
+   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
+   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl).
+
+  Time reify_interp_roundtrip H.
+  let tH := type of H in 
+  assert (t = tH) .
+  + Time reflexivity.
+(* We stopped HERE *)
          (* if t = Prop then *)
           (* interp_formula ctx f <-> interp_formula ctx g; *)
         (* else  *)
@@ -6328,136 +6458,3 @@ Section Term.
 
 Require Import Eqdep.
 
-Require Coq.Lists.List. Import List.ListNotations.
-Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
-Require Import Coq.micromega.Lia.
-Require Import Coq.Logic.PropExtensionality.
-
-Ltac propintu := intros; apply propositional_extensionality; intuition idtac.
-Module PropLemmas.
-  Lemma eq_True: forall (P: Prop), P -> P = True. Proof. propintu. Qed.
-  Lemma and_True_l: forall (P: Prop), (True /\ P) = P. Proof. propintu. Qed.
-  Lemma and_True_r: forall (P: Prop), (P /\ True) = P. Proof. propintu. Qed.
-  Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
-End PropLemmas.
-
-
-Section WithLib.
-  Context (word: Type)
-          (ZToWord: Z -> word)
-          (unsigned: word -> Z)
-          (wsub: word -> word -> word)
-          (wadd: word -> word -> word)
-          (wopp: word -> word).
-
-  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
-          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-          (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
-
-  (* Preprocessing: *)
-  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
-
-  (* With sideconditions: *)
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
-
-  Context (mem: Type)
-          (word_array: word -> list word -> mem -> Prop)
-          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
-
-  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
-
-  Ltac pose_list_lemmas :=
-    pose proof (@List.firstn_cons word) as firstn_cons;
-    pose proof (@List.skipn_cons word) as skipn_cons;
-    pose proof (@List.app_comm_cons word) as app_cons;
-    pose proof (@List.firstn_O word) as firstn_O;
-    pose proof (@List.skipn_O word) as skipn_O;
-    pose proof (@List.app_nil_l word) as app_nil_l;
-    pose proof (@List.app_nil_r word) as app_nil_r.
-
-  Ltac pose_prop_lemmas :=
-    pose proof PropLemmas.and_True_l as and_True_l;
-    pose proof PropLemmas.and_True_r as and_True_r;
-    pose proof PropLemmas.eq_eq_True as eq_eq_True.
-
-  Definition lipstick {A:Type} {a:A} := a.
-
-  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
-                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
-        (f g: word -> word) (b: word)
-        (HL: length vs = 3%nat)
-        (H : sep (word_array a
-          (List.firstn
-             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs) ++
-           [w2] ++
-           List.skipn
-             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs))) R m),
-      f (wadd b a) = g b /\
-      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
-      f (wadd b a) = f (wadd a b).
-  Proof.
-    intros.
-
-    pose_list_lemmas.
-    pose_prop_lemmas.
-
-    intros.
-    specialize (eq_eq_True word).
-
-    (* Make problems simpler by only considering one combination of the booleans,
-       but it would be nice to treat all of them at once *)
-    replace cond0_0 with false in * by admit.
-    replace cond0 with false in * by admit.
-
-    (* Make problem simpler by not requiring side conditions: since we know the
-       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
-       be on cons without sideconditions rather than on app with side conditions
-       on length *)
-    destruct vs as [|v0 vs]. 1: discriminate HL.
-    destruct vs as [|v1 vs]. 1: discriminate HL.
-    destruct vs as [|v2 vs]. 1: discriminate HL.
-    destruct vs as [|v3 vs]. 2: discriminate HL.
-    clear HL.
-    cbn.
-    (* cbn in H. <-- We don't do this cbn because now that we've done the above
-       destructs, cbn can do much more than it usually would be able to do. *)
-
-    (* Preprocessing *)
-    rewrite wsub_def in *.
-    clear wsub_def.
-    apply PropLemmas.eq_True in H.
-
-    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
-    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
-
-    (* Constant propagation rules, manually chosen to make things work,
-       TODO how to automate? *)
-    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
-
-  Ltac reify_interp_roundtrip h := 
-   let t := type of h in
-   let tmap := extend_typemap (EGraphList.nil : EGraphList.list Type) t in
-   let tname := fresh "tm" in
-   pose tmap as tname;
-   let cmap := extend_constmap tname (EGraphList.nil : EGraphList.list (dyn tname )) t in
-   (* idtac "tmap" tmap "constmap" cmap; *)
-   time let rH := reify_expr tname cmap (@EGraphList.nil (dyn tname)) t in 
-   pose (interp_term tname cmap (@EGraphList.nil (dyn tname) ) rH eq_refl).
-
-  Time reify_interp_roundtrip H.
-  let tH := type of H in 
-  assert (t = tH) .
-  + Time reflexivity.
-  { subst t.  
-  Compute (type_eq_dec (`1~>`2) (`1 ~> `2)).
-
-  Print type_eq_dec.
-  subst t. Time reflexivity. }
-
-  vm in t.

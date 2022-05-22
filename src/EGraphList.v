@@ -175,7 +175,7 @@ Section Facts.
   Theorem app_nil_r (l:list A) : l ++ [] = l.
   Proof.
     induction l; simpl; f_equal; auto.
-  Qed.
+  Defined.
 
   (* begin hide *)
   (* Deprecated *)
@@ -187,7 +187,7 @@ Section Facts.
   Theorem app_assoc (l m n:list A) : l ++ m ++ n = (l ++ m) ++ n.
   Proof.
     induction l; simpl; f_equal; auto.
-  Qed.
+  Defined.
 
   (* begin hide *)
   (* Deprecated *)
@@ -585,7 +585,7 @@ Section Elts.
     - split; [now destruct 1 | inversion 1].
     - now split; intros; [apply Nat.lt_0_succ|].
     - now rewrite IHl, Nat.succ_lt_mono.
-  Qed.
+  Defined.
 
   Lemma nth_error_split l n a : nth_error l n = Some a ->
     exists l1, exists l2, l = l1 ++ a :: l2 /\ length l1 = n.
@@ -603,7 +603,7 @@ Section Elts.
     revert l.
     induction n as [|n IHn]; intros [|a l] H; [easy ..|].
     cbn. now apply IHn, Nat.succ_le_mono.
-  Qed.
+  Defined.
 
   Lemma nth_error_app2 l l' n : length l <= n ->
     nth_error (l++l') n = nth_error l' (n-length l).
@@ -1109,20 +1109,20 @@ Section Map.
     intro n. induction n as [|n IHn]; intro l.
     - now destruct l.
     - destruct l as [|? l]; [reflexivity|exact (IHn l)].
-  Qed.
+  Defined.
 
   Lemma map_nth_error : forall n l d,
     nth_error l n = Some d -> nth_error (map l) n = Some (f d).
   Proof.
     intros n l d H. now rewrite nth_error_map, H.
-  Qed.
+  Defined.
 
   Lemma map_app : forall l l',
     map (l++l') = (map l)++(map l').
   Proof.
     intro l; induction l as [|a l IHl]; simpl; auto.
     intros; rewrite IHl; auto.
-  Qed.
+  Defined.
 
   Lemma map_last : forall l a,
     map (l ++ [a]) = (map l) ++ [f a].

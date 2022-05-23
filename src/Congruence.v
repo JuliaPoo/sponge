@@ -254,7 +254,46 @@ Fixpoint hlist_nth (l : list Type) n T (pf : nth_error l n = Some T)
       + exact pf.
       + exact cdr.
   }
-  Defined.
+Defined.
+
+Fixpoint hlist_update_nth {l : list Type } (n : nat) (dl : hlist l) t
+         (pf : nth_error l n = Some t) (e : t) {struct l} : hlist l.
+  destruct l.
+  - intros.
+    destruct n; discriminate.
+  - inversion dl.
+    destruct n; simpl in *.
+    + econstructor.
+      * inversion pf.
+        subst; exact e.
+      * exact cdr.
+    + subst.
+      econstructor.
+      * exact v.
+      * eapply hlist_update_nth.
+        ++ exact cdr.
+        ++ exact pf.
+        ++ exact e.
+Defined.
+
+(* (homogeneous) list whose length matches the length of another list *)
+Definition llist{A: Type}(B: Type)(l: list A): Type := hlist (map (fun _ => B) l).
+
+Definition llist_nth_error {A B : Type} {l : list A} (ll : llist B l)
+           (n : positive) : option B.
+  destruct (nth_error l (Pos.to_nat n - 1)) eqn: E.
+  - eapply map_nth_error with (f := fun _ => B) in E.
+    exact (Some (hlist_nth _ _ _ E ll)).
+  - exact None.
+Defined.
+
+Definition llist_update_nth {A B : Type} {l : list A} (ll : llist B l)
+           (n : positive) (b : B) : llist B l.
+  destruct (nth_error l (Pos.to_nat n - 1)) eqn: E.
+  - eapply map_nth_error with (f := fun _ => B) in E.
+    exact (hlist_update_nth (Pos.to_nat n - 1) ll _ E b).
+  - exact ll. (* out of bounds *)
+Defined.
 
   Fixpoint hlist_app {l :list Type} (hl : hlist l) {r :list Type} (hr : hlist r) :
   hlist (l ++ r).
@@ -784,23 +823,6 @@ Section egraphs.
       merge_n2id e1 e2 (n2id e);
     id2s := merge_id2s e1 e2 (id2s e) |}.
 
-  Fixpoint lookup_term {t} (f : term t) (e : egraph) : option (eclass_id) :=
-    (* Only for closed terms (don't have variables),
-       always return the canonical class id *)
-    match f with
-    | TApp e1 e2 =>
-      match lookup_term e1 e, lookup_term e2 e with
-      | Some e1, Some e2 =>
-        let fnode := EApp e1 e2 in
-        lookup e fnode
-      | _, _ => None
-      end
-    | TConst n t =>
-      lookup e (EConst n)
-    | TVar _ _ =>
-      None
-    end.
-
   Definition empty_egraph := {|
     max_allocated := 1;
     uf := init_uf;
@@ -808,9 +830,22 @@ Section egraphs.
     id2s := PTree.empty _
     |}.
 
-  Section add_term_def.
-    Context (types_of_varmap : list type)
-            (var_instantiations : hlist (map (fun _ => eclass_id) types_of_varmap)).
+  Section WithVars.
+    Context {types_of_varmap : list type}
+            (var_instantiations : llist eclass_id types_of_varmap).
+
+    Fixpoint lookup_term {t} (f : term t) (e : egraph) : option (eclass_id) :=
+      match f with
+      | TApp e1 e2 =>
+          match lookup_term e1 e, lookup_term e2 e with
+          | Some e1, Some e2 =>
+              let fnode := EApp e1 e2 in
+              lookup e fnode
+          | _, _ => None
+          end
+      | TConst n t => lookup e (EConst n)
+      | TVar n t => llist_nth_error var_instantiations n
+      end.
 
     Fixpoint add_term (e : egraph) {t} (f : term t) : (egraph * eclass_id).
       refine (
@@ -845,17 +880,17 @@ Section egraphs.
                           (id2s e)|}, eid_newterm)
         end
       end).
-      destruct (nth_error types_of_varmap (Pos.to_nat n - 1)) eqn: E.
-      - eapply map_nth_error with (f := fun _ => eclass_id) in E.
-        exact (e, (hlist_nth _ _ _ E var_instantiations)).
-      - exact (e, 1). (* ruled out by wf_term *)
+      exact (match llist_nth_error var_instantiations n with
+             | Some id => (e, id)
+             | None => (e, 1) (* ruled out by wf_term *)
+             end).
     Defined.
-  End add_term_def.
+  End WithVars.
 
   Definition merge_terms {t} (e : egraph) (f : term t) (g : term t) : egraph * eclass_id * eclass_id :=
     (* One of the two returned eid become non-canonical and should not be returned *)
-    let '(newe, fid) := add_term [] HNil e f in
-    let '(newe', gid) := add_term [] HNil newe g in
+    let '(newe, fid) := @add_term [] HNil e _ f in
+    let '(newe', gid) := @add_term [] HNil newe _ g in
     (merge newe' fid gid, fid, gid).
 
   Definition classIsCanonical e (n : eclass_id) :=
@@ -878,8 +913,8 @@ Section egraphs.
       correct: forall t (f g : term t) (eid : eclass_id)
       (wf_f : wf_term typemap constmap [] f = true)
       (wf_g : wf_term typemap constmap [] g = true),
-      lookup_term f e = Some eid ->
-      lookup_term g e = Some eid ->
+      @lookup_term [] HNil _ f e = Some eid ->
+      @lookup_term [] HNil _ g e = Some eid ->
      interp_term typemap constmap [] HNil f wf_f = interp_term typemap constmap [] HNil g wf_g;
 
       nobody_outside :
@@ -903,8 +938,8 @@ Section egraphs.
         forall {t1 t2} (f : term t1) (g : term t2) (c : eclass_id)
         (wf_f : wf_term typemap constmap [] f = true)
         (wf_g : wf_term typemap constmap [] g = true),
-        lookup_term f e = Some c ->
-        lookup_term g e = Some c ->
+        @lookup_term [] HNil _ f e = Some c ->
+        @lookup_term [] HNil _ g e = Some c ->
         t1 = t2;
       wf_uf:
         forall (c : eclass_id),
@@ -914,7 +949,7 @@ Section egraphs.
 
   Lemma add_term_safe : forall {t} (f : term t) e ,
     invariant_egraph e ->
-    let '(newe, _eid) := add_term [] HNil e f in
+    let '(newe, _eid) := @add_term [] HNil e _ f in
     invariant_egraph newe.
        Admitted.
 
@@ -925,10 +960,10 @@ Section egraphs.
       wf_term typemap constmap [] g = true ->
       wf_term typemap constmap [] f1 = true ->
       wf_term typemap constmap [] f2 = true ->
-      lookup_term f e = Some n0 ->
-      lookup_term g e = Some n1 ->
-      lookup_term f1 (merge e n0 n1) = Some n2 ->
-      lookup_term f2 (merge e n0 n1) = Some n2 ->
+      @lookup_term [] HNil _ f e = Some n0 ->
+      @lookup_term [] HNil _ g e = Some n1 ->
+      @lookup_term [] HNil _ f1 (merge e n0 n1) = Some n2 ->
+      @lookup_term [] HNil _ f2 (merge e n0 n1) = Some n2 ->
       t1 = t2.
       Admitted.
 
@@ -1220,37 +1255,9 @@ Section Potentials.
 
   Definition FUEL := 30.
 
-
-  Fixpoint hlist_update_nth {l : list Type } (n : nat) (dl : hlist l) t (pf:nth_error l n = Some t)
-  (e : t) {struct l}
-   : hlist l.
-  destruct l.
-  -
-    intros.
-    destruct n; discriminate.
-  -
-    inversion dl.
-    destruct n; simpl in *.
-    +
-      econstructor.
-      * inversion pf.
-        subst; exact e.
-      *
-        exact cdr.
-    +
-      subst.
-      econstructor.
-      * exact v.
-      * eapply hlist_update_nth.
-        ++ exact cdr.
-        ++ exact pf.
-        ++ exact e.
-  Defined.
-
-
 (* I will do translation validation for hte match pattern, that will be the easiest.
 Validator will simply return a boolean if the candidate matches the pattern and hence if the fn is correct *)
-Definition no_constraints (quanttype : list type) : hlist (map (fun x=> option eclass_id) quanttype).
+Definition no_constraints (quanttype : list type) : llist (option eclass_id) quanttype.
   induction quanttype.
   - econstructor.
   - econstructor.
@@ -1271,7 +1278,7 @@ Definition rev_seq_pos (n: positive) :=
   rev_seq_pos' n (Pos.to_nat n).
 
 Definition init_consider (types_of_varmap: list type) (e : egraph) :
- list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))) :=
+ list (Prod eclass_id (llist (option eclass_id) types_of_varmap)) :=
   dropNone (map (fun el =>
       if find (uf e) el =? el then
         Some (prod el (no_constraints types_of_varmap))
@@ -1293,9 +1300,9 @@ End MiniTests.
 Fixpoint match_pattern_aux' (fuel : nat) (types_of_varmap : list type)
 (e : egraph)
 (current_root : eclass_id)
-(quant_constraints : hlist (map (fun x=> option eclass_id) types_of_varmap))
+(quant_constraints : llist (option eclass_id) types_of_varmap)
 t (p : term  t) :
-list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
+list (llist (option eclass_id) types_of_varmap).
   refine (match p with
   | TApp p1 p2 => _
   | TVar n t => _
@@ -1313,7 +1320,7 @@ list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
                     ++ acci
                   ) mid acc
             ) apps_represented_by_root nil) as list_constraints_after_fn.
-    refine(flat_map (fun elret =>  _: list (hlist (map (fun x=> option eclass_id) types_of_varmap))) list_constraints_after_fn ).
+    refine(flat_map (fun elret =>  _: list (llist (option eclass_id) types_of_varmap)) list_constraints_after_fn ).
     exact (PTree.tree_fold_preorder (fun acc mid  =>
             PTree.tree_fold_preorder (fun acci '(fnbody, arg) =>
                     match_pattern_aux' fuel types_of_varmap e arg elret _ p1
@@ -1330,37 +1337,30 @@ list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
     - exact [].
   }
   {
-    (* destruct (nth_error (map (fun _ => option eclass_id) types_of_varmap) (Pos.to_nat n -1)) eqn:?. *)
-    destruct (nth_error types_of_varmap (Pos.to_nat n -1)) eqn:?.
-    -
-      eapply map_nth_error with (f:= (fun x => option eclass_id))in Heqo.
-      pose (hlist_nth _ _ _ Heqo quant_constraints) as quantifier_constraint.
-      destruct quantifier_constraint as [instantiation| ].
-      {
+    destruct (llist_nth_error quant_constraints n) as [quantifier_constraint|].
+    - (* n in bounds *)
+      destruct quantifier_constraint as [instantiation|].
+      + (* quantifier is constrained *)
         destruct ((find (uf e) instantiation =? find (uf e) current_root)%positive).
-        -
+        * (* consistent with instantiation *)
           exact [quant_constraints].
-        -
+        * (* contradicts instantiation *)
           exact [].
-      }
-      {
-          exact [hlist_update_nth (Pos.to_nat n -1) quant_constraints _ Heqo (Some current_root)].
-      }
-    -
+      + (* quantifier can be anything, so let's instantiate it *)
+        exact [llist_update_nth quant_constraints n (Some current_root)].
+    - (* n out of bounds *)
       exact [].
   }
-  Defined.
-
-
+Defined.
 
 Definition match_pattern_any_root (fuel : nat) (types_of_varmap : list type)
 (e : egraph)
 t (p : term t) :
 list
-   (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))
+   (Prod eclass_id (llist (option eclass_id) types_of_varmap))
     :=
   flat_map
-    (fun (el : (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))))  =>
+    (fun (el : (Prod eclass_id (llist (option eclass_id) types_of_varmap)))  =>
     match el with
     | prod root quant_constraints => map (prod root) (match_pattern_aux' fuel types_of_varmap e root quant_constraints t p)
     end)
@@ -1369,11 +1369,11 @@ list
 Definition saturate_1LtoR_aux
   (types_of_varmap: list type) t'
   (rootL : eclass_id)
-  (qInsts : (hlist (map (fun x=> eclass_id) types_of_varmap)))
+  (qInsts : llist eclass_id types_of_varmap)
   (pr : term  t')
   (e : egraph):
   egraph :=
-  let (e, rootR) := add_term types_of_varmap qInsts e pr in
+  let (e, rootR) := add_term qInsts e pr in
   merge e rootL rootR.
 
 Definition constmap_app (tm tm_ext : list Type)
@@ -1484,9 +1484,21 @@ Require Import Coq.Logic.EqdepFacts.
 
 Fixpoint match_respects_pattern(e : egraph)(types_of_varmap : list type)
          (root: eclass_id)
-         (varmap: hlist (map (fun _ => eclass_id) types_of_varmap))
+         (varmap: llist eclass_id types_of_varmap)
          {t} (p : term t) : bool :=
   true. (* TODO *)
+
+Lemma match_respects_pattern_to_lookup{types_of_varmap : list type}
+      (varmap : llist eclass_id types_of_varmap) e root {t} (p : term t):
+    match_respects_pattern e types_of_varmap root varmap p = true ->
+    lookup_term varmap p e = Some root.
+Admitted.
+
+Lemma match_respects_pattern_to_add_term_idemp: forall e root varmap {t} (p : term t),
+    match_respects_pattern e [] root varmap p = true ->
+    @add_term [] HNil e _ p = (e, root).
+Proof.
+Admitted.
 
 Lemma saturate_1LtoR_correct : forall
     {typemap} constmap (types_of_varmap : list type) t
@@ -1496,43 +1508,24 @@ Lemma saturate_1LtoR_correct : forall
     (e : egraph)
     (e_pf: invariant_egraph typemap constmap e)
     (rootL : eclass_id)
-    (varmap: hlist (map (fun _ => eclass_id) types_of_varmap))
+    (varmap: llist (eclass_id) types_of_varmap)
     (vtrue : match_respects_pattern e types_of_varmap rootL varmap pL = true)
     (th_true : generate_theorem types_of_varmap t pL pR wfL wfR),
     invariant_egraph typemap constmap
            (saturate_1LtoR_aux types_of_varmap t rootL varmap pR e).
 Proof.
-  induction quantifiermap.
-  {
-      intros.
-      simpl in th_true.
-      unfold eq_rect_r, eq_rect,eq_sym in th_true.
-      unfold saturate_1LtoR_aux, list_rect .
-      cbn - [propose_formula].
-      destruct (propose_formula _ _ _ _ ) eqn:? in pf.
-      rewrite Heqo.
-      remember (deeplist2_from_deeplisteclass _ _ _).
-      destruct o.
-      simpl in Heqo0.
-      inversion Heqo0.
-      pose (@pattern_to_formula_correct typemap ctx t' DNil2 pnew).
-      simpl in Heqo0.
-      cbn in pf.
-      rewrite th_true in pf.
-      pose @merge_preserve.
-      specialize (y) with (1:=e_pf).
-      rewrite e0 in pf.
-      symmetry in pf.
-      specialize y with (1:= pf).
-      destruct (mergeF _ _ _) eqn:?.
-      destruct p0.
-      eauto.
-      cbn in Heqo0.
-      inversion Heqo0.
-      rewrite Heqo; eauto.
-  }
-  {
-    intros.
+  induction types_of_varmap; intros.
+  - unfold generate_theorem in th_true.
+    simpl in th_true.
+    unfold saturate_1LtoR_aux.
+    pose proof @merge_preserve as P.
+    specialize P with (1:=e_pf) (2:=th_true).
+    unfold merge_terms in P.
+    erewrite match_respects_pattern_to_add_term_idemp in P. 2: eassumption.
+    destruct (add_term _ _ _) eqn: E.
+    exact P.
+  -
+
     dependent destruction input.
     dependent destruction y.
     cbv [fstP] in pf.

@@ -1195,8 +1195,8 @@ Defined. *)
 
 
 Section Potentials.
-  Context {typemap : list Type}.
-  Context {constmap: list (dyn typemap)}.
+  (* Context {typemap : list Type}.
+  Context {constmap: list (dyn typemap)}. *)
 
   Fixpoint dropNone {A:Type} (l : list (option A))  : list A :=
     match l with
@@ -1264,19 +1264,88 @@ Compute (hlist_update_nth 0 in0 _ eq_refl (Some 2%positive)).
 
 End MiniTests.
 
+
 Fixpoint match_pattern_aux' (fuel : nat) (types_of_varmap : list type)
-(e : egraph )
-(to_consider : list (Prod eclass_id  (hlist (map (fun x=> option eclass_id) types_of_varmap))))
+(e : egraph)
+(current_root : eclass_id)
+(quant_constraints : hlist (map (fun x=> option eclass_id) types_of_varmap))
+t (p : term  t) :
+list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
+  refine (match p with 
+  | TApp p1 p2 => _
+  | TVar n t => _
+  | TConst n t => _
+  end).
+  {
+    (* Filter the enodes such that they are of the form EApp1 ...
+    unshelve refine (let new_consider := concat (map (fun el => _ : list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) to_consider) in _).
+    2:{
+      exact new_consider.
+    } *)
+    pose (PTree.get current_root (id2s e)) as root_set_enodes_package.
+    destruct root_set_enodes_package as [[[_ type_root] enodes_represented_by_root]|].
+    2:{ exact nil.  }
+    destruct (enodes_represented_by_root) as [const_represented_by_root apps_represented_by_root].
+    clear const_represented_by_root.
+    pose (PTree.tree_fold_preorder (fun acc mid  => 
+            PTree.tree_fold_preorder (fun acci '(fnbody, arg) => 
+                    match_pattern_aux' fuel types_of_varmap e fnbody quant_constraints _ p1
+                    ++ acci
+                  ) mid acc
+            ) apps_represented_by_root nil) as list_constraints_after_fn.
+    refine(flat_map (fun elret =>  _: list (hlist (map (fun x=> option eclass_id) types_of_varmap))) list_constraints_after_fn ). 
+    exact (PTree.tree_fold_preorder (fun acc mid  => 
+            PTree.tree_fold_preorder (fun acci '(fnbody, arg) => 
+                    match_pattern_aux' fuel types_of_varmap e arg elret _ p1
+                    ++ acci
+                  ) mid acc
+            ) apps_represented_by_root nil). 
+  }
+  2:{
+    unshelve refine (let id_atom2 := lookup e (EConst n ) in _).
+    destruct id_atom2.
+    - destruct ((e0 =? find (uf e) current_root)%positive).
+      * exact [quant_constraints].
+      * exact [].
+    - exact [].
+  }
+  {
+    (* destruct (nth_error (map (fun _ => option eclass_id) types_of_varmap) (Pos.to_nat n -1)) eqn:?. *)
+    destruct (nth_error types_of_varmap (Pos.to_nat n -1)) eqn:?.
+    -
+      eapply map_nth_error with (f:= (fun x => option eclass_id))in Heqo.
+      pose (hlist_nth _ _ _ Heqo quant_constraints) as quantifier_constraint.
+      destruct quantifier_constraint as [instantiation| ].
+      {
+        destruct ((find (uf e) instantiation =? find (uf e) current_root)%positive).
+        -
+          exact [quant_constraints].
+        -
+          exact [].
+      }
+      {
+          exact [hlist_update_nth (Pos.to_nat n -1) quant_constraints _ Heqo (Some current_root)].
+      }
+    -
+      exact [].
+  }
+  Defined.
+
+
+Fixpoint match_pattern_aux' (fuel : nat) (types_of_varmap : list type)
+(e : egraph)
+(* (to_consider : list (Prod eclass_id  (hlist (map (fun x=> option eclass_id) types_of_varmap)))) *)
+(to_consider : Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))
 t (p : term  t) :
 list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))).
   refine (match p with 
-  | PApp1 p1 p2 => _
-  | PVar n eq => _
-  | PAtom1 n t eq => _
+  | TApp p1 p2 => _
+  | TVar n t => _
+  | TConst n t => _
   end).
   {
     (* Filter the enodes such that they are of the form EApp1 ... *)
-    unshelve refine (let new_consider := concat (map (fun el => _ : list (Prod eclass_id (DeepListEclass quanttype))) to_consider) in _).
+    unshelve refine (let new_consider := concat (map (fun el => _ : list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) to_consider) in _).
     2:{
       exact new_consider.
     }
@@ -1289,39 +1358,35 @@ list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))).
     destruct s.
     pose (PTree.tree_fold_preorder (fun acc mid  => 
             PTree.tree_fold_preorder (fun acci '(fnbody, arg) => 
-                    match_pattern_aux' typemap fuel ctx quanttype e (cons (prod fnbody (sndP el)) nil) _ p1
+                    match_pattern_aux' fuel types_of_varmap e (cons (prod fnbody (sndP el)) nil) _ p1
                     ++ acci
                   ) mid acc
-            ) t1 nil ) as post_fn_body.
+            ) t3 nil ) as post_fn_body.
             rename el into el_old.
     unshelve refine (let post_arg := 
-              map (fun elret =>  _: list (Prod eclass_id (DeepListEclass quanttype))) post_fn_body in _). 
+              map (fun elret =>  _: list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) post_fn_body in _). 
     2:{ exact (concat post_arg) . }
-    pose (PTree.get (fstP elret) t1).
+    pose (PTree.get (fstP elret) t3).
     destruct o.
     2:{ exact nil. }
     exact (PTree.tree_fold_preorder (fun acci '(fnbody,arg)=> 
                     (map (fun el => 
                        prod (fstP el_old) (sndP el)) 
-                        (match_pattern_aux' typemap fuel ctx quanttype e (cons (prod arg (sndP elret)) nil) _ p2)) ++ acci
-                  ) t2 nil
-            ).
+                        (match_pattern_aux' fuel types_of_varmap e (cons (prod arg (sndP elret)) nil) _ p2)) ++ acci
+                  ) t4 nil).
   }
   2:{
     refine(dropNone (map (fun X => _) to_consider)).
-    unshelve refine (let id_atom2 := lookup e (EAtom1 n) in _).
+    unshelve refine (let id_atom2 := lookup e (EConst n ) in _).
     destruct id_atom2.
-    destruct ((e0 =? find (uf e) (fstP X))%positive).
-    exact (Some X).
-    exact None.
-    exact None.
+    - destruct ((e0 =? find (uf e) (fstP X))%positive).
+      * exact (Some X).
+      * exact None.
+    - exact None.
   }
   {
     refine (dropNone (map (fun X => _) to_consider)).
-    (* There we have one concrete enode, we want to look it up,
-    and then either it is the same as the one in the assignemnt map,  we can keep the assignemnt and then entry,
-    or it is not in the assignment map, then we add it and we keep this entry, or it is inconsistent with the current assignment, then we die.  *)
-    pose (nth_deep'' n (sndP X)).
+    pose (nth_error n types_of_varmap).
     destruct o.
     2:{ exact (Some (prod (fstP X) (change_nth_deep'' n (sndP X) (fstP X)))). }
     destruct ((find (uf e) e0 =? find (uf e) (fstP X))%positive) eqn:?.

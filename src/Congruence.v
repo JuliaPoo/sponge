@@ -1172,8 +1172,9 @@ Goal (forall m n, (forall x y ,  x + y = y + x)  -> (forall x y, x * y = y * x) 
 
 
 
-Inductive Prod : Type -> Type -> Type :=
-  | prod : forall {T T'} (x:T) (y : T'), Prod T T'.
+Inductive Prod {T T': Type}: Type :=
+  | prod : forall  (x:T) (y : T'), Prod .
+Arguments Prod : clear implicits.
 Definition fstP {A B:Type} (x : Prod A B) := match x with
 | prod f s => f
 end.
@@ -1248,10 +1249,22 @@ Defined.
 (* (0 ( _))
    (42 (_ _)) *)
 (* (_ (_ _ _ _)) *)
+Fixpoint rev_seq_pos' acc (n: nat) :=
+  match n with 
+  | O => nil
+  | S n => acc :: rev_seq_pos' (acc - 1) n 
+  end.
+
+Definition rev_seq_pos (n: positive) :=
+  rev_seq_pos' n (Pos.to_nat n).
 
 Definition init_consider (types_of_varmap: list type) (e : egraph) :
  list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))) :=
-  map (fun el => prod (Pos.of_nat el) (no_constraints types_of_varmap)) (seq 0 (Pos.to_nat (max_allocated e))).
+  dropNone (map (fun el => 
+      if find (uf e) el =? el then 
+        Some (prod el (no_constraints types_of_varmap))
+      else 
+        None) (rev_seq_pos (max_allocated e))).
 
 Section MiniTests.
 Import EGraphList.ListNotations.
@@ -1277,11 +1290,6 @@ list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
   | TConst n t => _
   end).
   {
-    (* Filter the enodes such that they are of the form EApp1 ...
-    unshelve refine (let new_consider := concat (map (fun el => _ : list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) to_consider) in _).
-    2:{
-      exact new_consider.
-    } *)
     pose (PTree.get current_root (id2s e)) as root_set_enodes_package.
     destruct root_set_enodes_package as [[[_ type_root] enodes_represented_by_root]|].
     2:{ exact nil.  }
@@ -1332,134 +1340,69 @@ list (hlist (map (fun x=> option eclass_id) types_of_varmap)).
   Defined.
 
 
-Fixpoint match_pattern_aux' (fuel : nat) (types_of_varmap : list type)
+
+Definition match_pattern_any_root (fuel : nat) (types_of_varmap : list type)
 (e : egraph)
-(* (to_consider : list (Prod eclass_id  (hlist (map (fun x=> option eclass_id) types_of_varmap)))) *)
-(to_consider : Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))
-t (p : term  t) :
-list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))).
-  refine (match p with 
-  | TApp p1 p2 => _
-  | TVar n t => _
-  | TConst n t => _
-  end).
+t (p : term t) :
+list 
+   (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))
+    :=
+  flat_map 
+    (fun (el : (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap))))  =>
+    match el with 
+    | prod root quant_constraints => map (prod root) (match_pattern_aux' fuel types_of_varmap e root quant_constraints t p)
+    end) 
+    (init_consider types_of_varmap e).
+
+Definition saturate_1LtoR_aux : forall
+  types_of_varmap t' 
+  (matchingL : Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))
+  (pr : term  t')
+  (e : egraph)
+  ,
+  egraph
+  .
+  induction quantifiermap.
   {
-    (* Filter the enodes such that they are of the form EApp1 ... *)
-    unshelve refine (let new_consider := concat (map (fun el => _ : list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) to_consider) in _).
-    2:{
-      exact new_consider.
-    }
-    pose (PTree.get (fstP el) (id2s e)).
-    destruct o.
-    2:{
-      exact nil.
-    }
-    destruct p0.
-    destruct s.
-    pose (PTree.tree_fold_preorder (fun acc mid  => 
-            PTree.tree_fold_preorder (fun acci '(fnbody, arg) => 
-                    match_pattern_aux' fuel types_of_varmap e (cons (prod fnbody (sndP el)) nil) _ p1
-                    ++ acci
-                  ) mid acc
-            ) t3 nil ) as post_fn_body.
-            rename el into el_old.
-    unshelve refine (let post_arg := 
-              map (fun elret =>  _: list (Prod eclass_id (hlist (map (fun x=> option eclass_id) types_of_varmap)))) post_fn_body in _). 
-    2:{ exact (concat post_arg) . }
-    pose (PTree.get (fstP elret) t3).
-    destruct o.
-    2:{ exact nil. }
-    exact (PTree.tree_fold_preorder (fun acci '(fnbody,arg)=> 
-                    (map (fun el => 
-                       prod (fstP el_old) (sndP el)) 
-                        (match_pattern_aux' fuel types_of_varmap e (cons (prod arg (sndP elret)) nil) _ p2)) ++ acci
-                  ) t4 nil).
-  }
-  2:{
-    refine(dropNone (map (fun X => _) to_consider)).
-    unshelve refine (let id_atom2 := lookup e (EConst n ) in _).
-    destruct id_atom2.
-    - destruct ((e0 =? find (uf e) (fstP X))%positive).
-      * exact (Some X).
-      * exact None.
-    - exact None.
+      intros.
+      simpl in *.
+      pose @pattern_to_formula.
+      pose (deeplist2_from_deeplisteclass (ctx:=ctx) nil (sndP matchingL) e).
+      destruct o.
+      2:{ exact e. }
+      specialize f with (1:= d).
+      specialize f with (1:=pnew).
+      pose (propose_formula (t:= t') ctx e FUEL (fstP matchingL)).
+      destruct o.
+      pose (mergeF e f0 f).
+      destruct p0.
+      destruct p0.
+      exact e1.
+      exact e.
   }
   {
-    refine (dropNone (map (fun X => _) to_consider)).
-    pose (nth_error n types_of_varmap).
+    simpl.
+    intros.
+    rename matchingL into x.
+    set (fstP x) in *.
+    remember (sndP x) in *.
+    (* We need a way to say  *)
+    simpl in *.
+    specialize (IHquantifiermap) with (3 := e).
+    inversion d.
+    specialize (IHquantifiermap) with (3 := (prod e0 cdr)).
+    destruct v.
+    2:{ exact e. }
+    pose (propose_formula (t:= a) ctx e FUEL e1).
     destruct o.
-    2:{ exact (Some (prod (fstP X) (change_nth_deep'' n (sndP X) (fstP X)))). }
-    destruct ((find (uf e) e0 =? find (uf e) (fstP X))%positive) eqn:?.
-    exact (Some X).
-    exact None.
+    2:{ exact e. }
+    pose (app_pattern f p).
+    pose (app_pattern f pnew).
+    eapply IHquantifiermap.
+    exact p0.
+    exact p1.
   }
   Defined.
-
-Definition match_pattern_aux {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
-(e : egraph )
-t (p : Pattern (typemap:=typemap) (ctx:=ctx) (quantifiermap:=quanttype) t) :
-list (Prod eclass_id (DeepListEclass quanttype)).
-exact (match_pattern_aux' fuel ctx quanttype e (init_consider quanttype e) t p).
-Defined.
-
-Definition match_pattern {typemap : list Type} (fuel : nat) ctx (quanttype : list type)
-(* Need to improve this function ... *)
-(e : egraph)
-t (p : Pattern (ctx:=ctx) (quantifiermap:=quanttype) t) :
-list 
-   (Prod (Formula (ctx:=ctx) t) (DeepList2 (typemap:=typemap) (ctx:=ctx) quanttype)):=
-  dropNone (map (fun x => match propose_formula (t := t) ctx e fuel (fstP x) , (deeplist2_from_deeplisteclass quanttype (sndP x) e) with
-                        | Some f, Some l => Some (prod f l)
-                        | _, _=> None
-                      end) (match_pattern_aux fuel ctx quanttype e t p)).
-(* 
-Fixpoint matc{typemap : list Type} (fuel : nat) ctx (quanttype : list type)
-(* Need to improve this function ... *)
-(e : egraph ) 
-(to_consider : DeepListPotentials quanttype) t (p : Pattern (ctx:=ctx) (quantifiermap:=quanttype) t) :
-list 
-   (Prod (Formula (ctx:=ctx) t) (DeepList2 (typemap:=typemap) (ctx:=ctx) quanttype)).
-  refine (match p with 
-  | PApp1 p1 p2 => _
-  | PVar n eq => _
-  | PAtom1 n t eq => _
-  end).
-  {
-    simpl.
-    refine (let partial := concat (map (fun arg => dropNone (map (fun fn =>
-                ?[internal]) (match_pattern typemap fuel ctx quanttype e to_consider _ p1))) 
-               (match_pattern typemap fuel ctx quanttype e to_consider _ p2) 
-                ) in partial).
-    unshelve instantiate (internal:=_).
-    pose (App1 (fstP fn) (fstP arg)).
-    (* pose (lookupF f e).
-    destruct o.
-    2:{
-      exact None.
-    } *)
-    destruct (deep2_eqb _ _ (sndP fn) (sndP arg)) eqn:?.
-    2:{
-      exact None.
-    }
-    refine (Some _).
-    refine (prod f _).
-    exact (sndP arg).
-  }
-  {
-    pose (deeplist2_from_deeplistPotentials (ctx:=ctx) _ to_consider e) as partial_result.
-    refine(map (fun X => _) partial_result).
-    pose (nth_deep' n d eq X).
-    exact (prod f X).
-  }
-  {
-    pose (deeplist2_from_deeplistPotentials (ctx:=ctx) _ to_consider e) as partial_result.
-    refine(map (fun X => _) partial_result).
-    refine (prod (Atom1 _ _ _) X).
-    simpl.
-    eauto.
-  }
-  Defined. *)
-
 Lemma in_dropNone:
   forall [A : Type] (l : list (option A)) (y : A),
   In y (dropNone l) <-> ( In (Some y) l ).

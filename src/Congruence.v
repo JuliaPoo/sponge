@@ -977,6 +977,25 @@ Section egraphs.
     Admitted.
 End egraphs.
 
+Section TcVarmap.
+  Context (e: egraph).
+
+  Definition typecheck_eid(eid: eclass_id)(expected_type: type): bool :=
+    match PTree.get eid (id2s e) with
+    | Some (_, actual_type, _) => type_eqb actual_type expected_type
+    | None => false
+    end.
+
+  Fixpoint typecheck_varmap{types_of_varmap : list type}
+           (varmap: llist (eclass_id) types_of_varmap): bool.
+    unfold llist in varmap.
+    destruct types_of_varmap. 1: exact true.
+    inversion varmap. subst.
+    refine (andb (typecheck_eid v t) _).
+    exact (typecheck_varmap types_of_varmap cdr).
+  Defined.
+End TcVarmap.
+
 Arguments invariant_egraph : clear implicits.
 
 (* Note we need to make sure that types are uniquely put in the list, no duplicate! *)

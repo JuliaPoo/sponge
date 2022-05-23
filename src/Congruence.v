@@ -1605,6 +1605,7 @@ Proof.
     destruct H.
     pose proof (@wt_egraph _ _ _ e_pf).
 
+
       eapply @interp_term.
       - exact cdr.
 

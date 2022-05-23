@@ -843,8 +843,8 @@ Section egraphs.
               lookup e fnode
           | _, _ => None
           end
-      | TConst n t => lookup e (EConst n)
-      | TVar n t => llist_nth_error var_instantiations n
+      | TConst n _t => lookup e (EConst n)
+      | TVar n _t => llist_nth_error var_instantiations n
       end.
 
     Fixpoint add_term (e : egraph) {t} (f : term t) : (egraph * eclass_id).
@@ -881,7 +881,8 @@ Section egraphs.
         end
       end).
       exact (match llist_nth_error var_instantiations n with
-             | Some id => (e, id)
+              (* Invariant it is always the case that the varmap contaisn eclass_id that were already in the egraph *)
+             | Some id => (e, id) 
              | None => (e, 1) (* ruled out by wf_term *)
              end).
     Defined.
@@ -909,7 +910,7 @@ Section egraphs.
   Context {typemap : list Type}.
   Context {constmap : list (dyn typemap)}.
   (* Context {varmap : list (dyn typemap)}. *)
-  Record invariant_egraph e : Prop := {
+  Record invariant_egraph {e} : Prop := {
       correct: forall t (f g : term t) (eid : eclass_id)
       (wf_f : wf_term typemap constmap [] f = true)
       (wf_g : wf_term typemap constmap [] g = true),
@@ -917,10 +918,20 @@ Section egraphs.
       @lookup_term [] HNil _ g e = Some eid ->
      interp_term typemap constmap [] HNil f wf_f = interp_term typemap constmap [] HNil g wf_g;
 
+    canonical_witness : forall eid, 
+    (* such that eid is allocated *)
+        eid < max_allocated e ->
+    (* and eid is canonical*)
+      find (uf e) eid = eid ->
+      (* There exists a term represented by that class *)
+        exists tp (t : term tp), @lookup_term [] HNil _ t e = Some eid /\
+                                  wf_term typemap constmap [] t = true ;
+
       nobody_outside :
        forall a (eid : eclass_id),
           lookup e a = Some eid ->
            (eid < max_allocated e)%positive;
+
       no_args_eapp1_outside :
         forall (eid : eclass_id)
                 (e1 : eclass_id)
@@ -946,7 +957,7 @@ Section egraphs.
           (c < max_allocated e)%positive ->
           (find (uf e) c < max_allocated e)%positive;
       }.
-
+  Global Arguments invariant_egraph : clear implicits.
   Lemma add_term_safe : forall {t} (f : term t) e ,
     invariant_egraph e ->
     let '(newe, _eid) := @add_term [] HNil e _ f in
@@ -1482,23 +1493,61 @@ Lemma eqPropType : forall {P P0 : Prop}, @eq Prop P P0 -> @eq Type P P0.
 Defined.
 Require Import Coq.Logic.EqdepFacts.
 
-Fixpoint match_respects_pattern(e : egraph)(types_of_varmap : list type)
+(* Fixpoint match_respects_pattern(e : egraph)(types_of_varmap : list type)
          (root: eclass_id)
          (varmap: llist eclass_id types_of_varmap)
-         {t} (p : term t) : bool :=
-  true. (* TODO *)
+         {t} (p : term t) : bool .
+  pose (lookup_term varmap p e).
+  destruct o.
+  -
+  (* TODO: think twice about canoninicity *)
+    exact (Pos.eqb root e0).
+  -
+    exact false.
+  Defined.
+   *)
 
+(* 
 Lemma match_respects_pattern_to_lookup{types_of_varmap : list type}
-      (varmap : llist eclass_id types_of_varmap) e root {t} (p : term t):
+      (* (varmap : llist eclass_id types_of_varmap)  *)
+    (varmap: hlist (map (fun t => term t) types_of_varmap))
+      e root {t} (p : term t):
     match_respects_pattern e types_of_varmap root varmap p = true ->
     lookup_term varmap p e = Some root.
-Admitted.
+Admitted. *)
 
-Lemma match_respects_pattern_to_add_term_idemp: forall e root varmap {t} (p : term t),
-    match_respects_pattern e [] root varmap p = true ->
-    @add_term [] HNil e _ p = (e, root).
+Lemma add_already_there : forall e {t} (p : term t) root 
+  types_of_varmap (varmap : llist eclass_id types_of_varmap),
+    lookup_term varmap p e = Some root ->
+    add_term varmap e p = (e, root).
 Proof.
-Admitted.
+  induction p.
+  {
+    intros.
+    simpl.
+    simpl in H.
+    destruct (lookup_term) eqn:? in H.
+    2:{ inversion H. }
+    destruct (lookup_term) eqn:? in H.
+    2:{ inversion H. }
+    erewrite IHp1; eauto.
+    erewrite IHp2; eauto.
+    rewrite H.
+    reflexivity.
+  } 
+  {
+    intros; simpl in *.
+    rewrite H.
+    reflexivity.
+  }
+  {
+    simpl;  intros.
+    rewrite H.
+    eauto.
+  }
+  Qed.
+
+
 
 Lemma saturate_1LtoR_correct : forall
     {typemap} constmap (types_of_varmap : list type) t
@@ -1508,8 +1557,8 @@ Lemma saturate_1LtoR_correct : forall
     (e : egraph)
     (e_pf: invariant_egraph typemap constmap e)
     (rootL : eclass_id)
-    (varmap: llist (eclass_id) types_of_varmap)
-    (vtrue : match_respects_pattern e types_of_varmap rootL varmap pL = true)
+    (varmap: llist eclass_id types_of_varmap)
+    (vtrue : lookup_term varmap pL e = Some rootL)
     (th_true : generate_theorem types_of_varmap t pL pR wfL wfR),
     invariant_egraph typemap constmap
            (saturate_1LtoR_aux types_of_varmap t rootL varmap pR e).
@@ -1521,10 +1570,30 @@ Proof.
     pose proof @merge_preserve as P.
     specialize P with (1:=e_pf) (2:=th_true).
     unfold merge_terms in P.
-    erewrite match_respects_pattern_to_add_term_idemp in P. 2: eassumption.
+    erewrite add_already_there in P.
+     2: eassumption.
     destruct (add_term _ _ _) eqn: E.
     exact P.
   -
+    unfold generate_theorem in th_true.
+    simpl in th_true.
+    inversion varmap.
+    pose proof (canonical_witness e_pf v).
+    assert (v < max_allocated e) by admit.
+    assert (find (uf e) v = v ) by admit.
+    specialize (H H2 H3).
+    destruct H.
+    destruct H.
+    pose proof (@wt_egraph _ _ _ e_pf).
+
+      eapply @interp_term.
+      - exact cdr.
+
+    }
+    interp_term
+    inversion varmap.
+    pose (propose_term constmap e 40 v).
+
 
     dependent destruction input.
     dependent destruction y.

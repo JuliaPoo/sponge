@@ -882,7 +882,7 @@ Section egraphs.
       end).
       exact (match llist_nth_error var_instantiations n with
               (* Invariant it is always the case that the varmap contaisn eclass_id that were already in the egraph *)
-             | Some id => (e, id) 
+             | Some id => (e, id)
              | None => (e, 1) (* ruled out by wf_term *)
              end).
     Defined.
@@ -918,7 +918,7 @@ Section egraphs.
       @lookup_term [] HNil _ g e = Some eid ->
      interp_term typemap constmap [] HNil f wf_f = interp_term typemap constmap [] HNil g wf_g;
 
-    canonical_witness : forall eid, 
+    canonical_witness : forall eid,
     (* such that eid is allocated *)
         eid < max_allocated e ->
     (* and eid is canonical*)
@@ -1526,7 +1526,7 @@ Require Import Coq.Logic.EqdepFacts.
   Defined.
    *)
 
-(* 
+(*
 Lemma match_respects_pattern_to_lookup{types_of_varmap : list type}
       (* (varmap : llist eclass_id types_of_varmap)  *)
     (varmap: hlist (map (fun t => term t) types_of_varmap))
@@ -1535,7 +1535,7 @@ Lemma match_respects_pattern_to_lookup{types_of_varmap : list type}
     lookup_term varmap p e = Some root.
 Admitted. *)
 
-Lemma add_already_there : forall e {t} (p : term t) root 
+Lemma add_already_there : forall e {t} (p : term t) root
   types_of_varmap (varmap : llist eclass_id types_of_varmap),
     lookup_term varmap p e = Some root ->
     add_term varmap e p = (e, root).
@@ -1553,7 +1553,7 @@ Proof.
     erewrite IHp2; eauto.
     rewrite H.
     reflexivity.
-  } 
+  }
   {
     intros; simpl in *.
     rewrite H.
@@ -1577,6 +1577,7 @@ Lemma saturate_1LtoR_correct : forall
     (e_pf: invariant_egraph typemap constmap e)
     (rootL : eclass_id)
     (varmap: llist eclass_id types_of_varmap)
+    (varmap_ok : typecheck_varmap e varmap = true)
     (vtrue : lookup_term varmap pL e = Some rootL)
     (th_true : generate_theorem types_of_varmap t pL pR wfL wfR),
     invariant_egraph typemap constmap
@@ -1593,16 +1594,15 @@ Proof.
      2: eassumption.
     destruct (add_term _ _ _) eqn: E.
     exact P.
-  -
-    unfold generate_theorem in th_true.
+  - unfold generate_theorem in th_true.
     simpl in th_true.
-    inversion varmap.
+    unfold llist in varmap. cbn in varmap.
+    dependent destruction varmap.
     pose proof (canonical_witness e_pf v).
-    assert (v < max_allocated e) by admit.
-    assert (find (uf e) v = v ) by admit.
-    specialize (H H2 H3).
-    destruct H.
-    destruct H.
+    assert (v < max_allocated e) as MA by admit.
+    assert (find (uf e) v = v ) as F by admit.
+    specialize (H MA F).
+    destruct H as (tp & w & L & Wf).
     pose proof (@wt_egraph _ _ _ e_pf).
 
 

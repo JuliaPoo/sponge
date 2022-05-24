@@ -1142,7 +1142,7 @@ Section TheoremGenerator.
 
  Definition generate_theorem
     (types_of_varmap : list type)
-    (t : type)
+    {t : type}
     (clc1 : term t)
     (clc2 : term t)
     (* wf hypothesis: *)
@@ -1152,20 +1152,19 @@ Section TheoremGenerator.
     pose proof (generate_theorem' [] HNil types_of_varmap t clc1 clc2 wf_clc1 wf_clc2).
     exact X.
     Defined.
-
-  Inductive reified_theorem :=
-  | Build_reified_theorem  : forall
-  (deept : type)
-  (tvm : list type)
-  (lhsP : term deept)
-  (rhsP : term deept)
-  (wf_lhsP : wf_term typemap constmap tvm lhsP = true)
-  (wf_rhsP : wf_term typemap constmap tvm rhsP = true)
-  (th_pf : generate_theorem tvm deept lhsP rhsP wf_lhsP wf_rhsP), reified_theorem.
 End TheoremGenerator.
-Notation "'ReifiedThm' a" := (let x := _ in
-                              let y := _ in
-                              Build_reified_theorem _ _ x y _ _ a) (only printing, at level 200).
+
+Inductive reified_equality :=
+| mk_reified_equality(tvm : list type){t : type}(lhsP rhsP: term t).
+
+Inductive command :=
+| CSaturateL2R(thm: reified_equality).
+(* later:
+| CSaturateR2L(thm: reified_equality)
+| CSaturateNoNewTerms(thm: reified_equality)
+| CComputeGroundTerms
+...
+*)
 
 Module Mut.
   Definition mut {T : Type} (x : T) := unit.
@@ -1211,7 +1210,7 @@ Ltac reify_theorem typemap constmap new_th H :=
     rename constmap into oldconstmap;
     evar (typemap : list Type);
     evar (constmap: list (dyn typemap));
-    evar (new_th: @reified_theorem typemap constmap);
+    evar (new_th: reified_equality);
     let t := type of H in
     let _ := open_constr:(ltac:(
     let varmap := make_varmap in
@@ -1239,7 +1238,7 @@ Ltac reify_theorem typemap constmap new_th H :=
       let new_th_u := eval unfold new_th in new_th in
       unify (let lhs' := reified_lhs in
              let rhs' := reified_rhs in
-        Build_reified_theorem (typemap := typemap) (constmap := constmap) _ types_of_varmap lhs' rhs' eq_refl eq_refl H)
+        mk_reified_equality types_of_varmap lhs' rhs')
         new_th_u
     end
     end; eapply H):t) in
@@ -1911,7 +1910,7 @@ Lemma saturate_1LtoR_correct : forall
     (varmap: llist eclass_id types_of_varmap)
     (varmap_ok : typecheck_varmap e varmap = true)
     (vtrue : lookup_term varmap pL e = Some rootL)
-    (th_true : generate_theorem types_of_varmap t pL pR wfL wfR),
+    (th_true : generate_theorem types_of_varmap pL pR wfL wfR),
     invariant_egraph typemap constmap
            (saturate_1LtoR_aux types_of_varmap t rootL varmap pR e).
 Proof.
@@ -5336,6 +5335,29 @@ Ltac reify_theorem typemap constmap new_th H :=
     Mut.put constmap constmap_e;
     idtac.
 *)
+
+
+(* a dynamically typed proof *)
+Record dyn_proof := mk_dyn_hyp {
+  dyn_proof_stmt : Prop;
+  dyn_proof_get : dyn_proof_stmt
+}.
+
+Section WithConstmap.
+  Context {typemap : list Type}.
+  Context (constmap: list (dyn typemap)).
+
+  Definition required_evidence(c: command): Prop :=
+    match c with
+    | CSaturateL2R (mk_reified_equality tvm lhsP rhsP) =>
+        exists (wf_lhsP : wf_term typemap constmap tvm lhsP = true)
+               (wf_rhsP : wf_term typemap constmap tvm rhsP = true),
+        generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP
+    end.
+
+  Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Prop :=
+    map dyn_proof_stmt ev = map required_evidence cs.
+End WithConstmap.
 
 End Temp.
 

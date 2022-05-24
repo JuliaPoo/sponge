@@ -492,15 +492,15 @@ Ltac indexHList e l :=
     constr:((S n)%nat)
     end
   end.
+
+Ltac eval_snoc l e := eval cbv [app] in (app l (cons e nil)).
+
 Ltac addList e l :=
   let member := inList e l in
  (* let __ := match O with | _ => idtac "addlist" e l member end in *)
   match member with
   | true => l
-  | false =>
-  let newl := eval cbv [app] in (app l (cons e nil)) in
- (* let __ := match O with | _ => idtac "appendlist" end in *)
-   newl
+  | false => eval_snoc l e
   end.
 
 Definition index := nat.
@@ -1154,11 +1154,17 @@ Section TheoremGenerator.
     Defined.
 End TheoremGenerator.
 
-Inductive reified_equality :=
-| mk_reified_equality(tvm : list type){t : type}(lhsP rhsP: term t).
+(* reified equality with quantifiers *)
+Inductive reified_q_equ :=
+| mk_reified_q_equ(tvm : list type){t : type}(lhsP rhsP: term t).
+
+(* reified quantifier-free equality *)
+Inductive reified_qf_equ :=
+| mk_reified_qf_equ{t : type}(lhs rhs : term t).
 
 Inductive command :=
-| CSaturateL2R(thm: reified_equality).
+| CSaturateL2R(thm: reified_q_equ)
+| CAddEqu(thm: reified_qf_equ).
 (* later:
 | CSaturateR2L(thm: reified_equality)
 | CSaturateNoNewTerms(thm: reified_equality)
@@ -1174,6 +1180,26 @@ Module Mut.
     | mut ?val => val
     end.
 End Mut.
+
+(* Mutable reference to a constmap (and typemap as well).
+   cm is of the form (let tm := <typemap> in let cm := <constmap> in tt).
+   The extra `in tt` is so that the return type of the expression can be
+   expressed without having to inline tm.
+   The argument is made implicit so that it's not displayed, because it
+   can grow quite big, despite the sharing of tm. *)
+Definition constmap_ref {cm : unit} := unit.
+Ltac constmap_ref_init :=
+  let name := fresh "constmap" in
+  pose proof (tt : @constmap_ref (let tm := @EGraphList.nil Type in
+                                 let cm := @EGraphList.nil (dyn tm) in tt)) as name.
+Ltac constmap_ref_put val :=
+  lazymatch goal with
+  | name: @constmap_ref _ |- _ => change (@constmap_ref val) in name
+  end.
+Ltac constmap_ref_get :=
+  lazymatch goal with
+  | name: @constmap_ref ?val |- _ => val
+  end.
 
 Ltac make_varmap :=
   lazymatch goal with
@@ -1210,7 +1236,7 @@ Ltac reify_theorem_let typemap constmap new_th H :=
     rename constmap into oldconstmap;
     evar (typemap : list Type);
     evar (constmap: list (dyn typemap));
-    evar (new_th: reified_equality);
+    evar (new_th: reified_q_equ);
     let t := type of H in
     let _ := open_constr:(ltac:(
     let varmap := make_varmap in
@@ -1238,7 +1264,7 @@ Ltac reify_theorem_let typemap constmap new_th H :=
       let new_th_u := eval unfold new_th in new_th in
       unify (let lhs' := reified_lhs in
              let rhs' := reified_rhs in
-        mk_reified_equality types_of_varmap lhs' rhs')
+        mk_reified_q_equ types_of_varmap lhs' rhs')
         new_th_u
     end
     end; eapply H):t) in
@@ -1441,6 +1467,12 @@ Definition saturate_LtoR (types_of_varmap: list type) {t} (pL pR : term t) (e : 
   : egraph :=
   let matches := match_pattern_any_root FUEL types_of_varmap e t pL in
   fold_left (saturate_1LtoR types_of_varmap pR) matches e.
+
+(* TODO: duplicate of merge_terms, but only returns an egraph instead of also rootL/rootR *)
+Definition add_equ {t} (lhs rhs : term t) (e: egraph) : egraph :=
+  let (e, rootL) := @add_term [] HNil e _ lhs in
+  let (e, rootR) := @add_term [] HNil e _ rhs in
+  merge e rootL rootR.
 
 Definition constmap_app (tm tm_ext : list Type)
            (constmap : list (dyn tm)) (ext: list (dyn (tm ++ tm_ext))) :
@@ -5496,13 +5528,13 @@ Goal True.
   end.
 Abort.
 
-(* Expects cmmut to be a mut cell of shape
-   (let tm := <typemap> in <constmap>). *)
-Ltac reify_quantified_equality cmmut t :=
+(* Expects a constmap_ref in context, of shape
+   (let tm := <typemap> in let cm := <constmap> in tt). *)
+Ltac reify_q_equ t :=
   let new_cm := open_constr:(_) in
-  let new_thm := open_constr:(_ : reified_equality) in
-  let __ := lazymatch Mut.get cmmut with
-  | (let tmName := ?oldtypemap_u in @?oldconstmapFun tmName) =>
+  let new_thm := open_constr:(_ : reified_q_equ) in
+  let __ := lazymatch constmap_ref_get with
+  | (let tmName := ?oldtypemap_u in let cmName := @?oldconstmapFun tmName in tt) =>
     open_constr:(ltac:(
       let H := fresh in
       intro H;
@@ -5513,24 +5545,76 @@ Ltac reify_quantified_equality cmmut t :=
         match type of varmap with
         | hlist ?list_types => ltac_map ltac:(reify_type tmap') list_types
         end in
+      let lhs := lazymatch goal with |- ?lhs = _ => lhs end in
+      let rhs := lazymatch goal with |- _ = ?rhs => rhs end in
       unify new_cm (let tmName := tmap' in ltac:(
         let lifted_oldconstmap := beta1 oldconstmapFun tmName in
         let cmap' := extend_constmap tmName varmap lifted_oldconstmap g in
-        let lhs := lazymatch goal with |- ?lhs = _ => lhs end in
-        let rhs := lazymatch goal with |- _ = ?rhs => rhs end in
         let reified_lhs := reify_expr tmap' cmap' types_of_varmap varmap lhs in
         let reified_rhs := reify_expr tmap' cmap' types_of_varmap varmap rhs in
-        unify new_thm (mk_reified_equality types_of_varmap reified_lhs reified_rhs);
-        exact cmap'));
+        unify new_thm (mk_reified_q_equ types_of_varmap reified_lhs reified_rhs);
+        exact (let cmName := cmap' in tt)));
       eapply H
     ) : t -> t)
   end in
-  let __ := match constr:(O) with _ => Mut.put cmmut new_cm end in
+  let __ := match constr:(O) with _ => constmap_ref_put new_cm end in
   new_thm.
+
+Ltac reify_qf_equ t :=
+  lazymatch reify_q_equ t with
+  | @mk_reified_q_equ nil ?t ?l ?r => constr:(@mk_reified_qf_equ t l r)
+  end.
+
+(* Identify function to annotate hypotheses and the goal with their reification.
+   R will be reified_q_equ or reified_qf_equ or term *)
+Definition reified(P: Prop){R: Type}{r: R} := P.
+
+Ltac reify_hyp H :=
+  let t := type of H in
+  lazymatch t with
+  | ?A -> ?B => fail "implications not yet supported"
+  | forall _, _ =>
+      let r := reify_q_equ t in
+      change (@reified t reified_q_equ r) in H
+  | _ = _ =>
+      let r := reify_qf_equ t in
+      change (@reified t reified_qf_equ r) in H
+  | _ => fail "not supported"
+  end.
+
+Ltac reify_unreified_hyp :=
+  match goal with
+  | H: ?T |- _ =>
+      lazymatch T with
+      | reified _ => fail
+      | _ => lazymatch type of T with
+             | Prop => reify_hyp H
+             end
+      end
+  end.
+
+Ltac reify_hyps := repeat reify_unreified_hyp.
+
+Lemma P_eq_True_to_P: forall (P: Prop), P = True -> P. Proof. intros. subst. exact I. Qed.
+
+Ltac reify_goal :=
+  lazymatch goal with
+  | |- _ = _ => idtac
+  | |- ?g => refine (P_eq_True_to_P g _)
+  end;
+  lazymatch goal with
+  | |- ?g => let r := reify_qf_equ g in change (@reified g reified_qf_equ r)
+  end.
+
+Ltac reify_all :=
+  constmap_ref_init;
+  reify_hyps;
+  reify_goal.
 
 Definition apply_command (e : egraph) (c : command) : egraph :=
   match c with
-  | CSaturateL2R (mk_reified_equality tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
+  | CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
+  | CAddEqu (mk_reified_qf_equ lhs rhs) => add_equ lhs rhs e
   end.
 
 Definition apply_commands : list command -> egraph -> egraph :=
@@ -5548,10 +5632,14 @@ Section WithConstmap.
 
   Definition required_evidence(c: command): Type :=
     match c with
-    | CSaturateL2R (mk_reified_equality tvm lhsP rhsP) =>
+    | CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) =>
         { wf_lhsP : wf_term typemap constmap tvm lhsP = true &
           { wf_rhsP : wf_term typemap constmap tvm rhsP = true &
              generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP } }
+    | CAddEqu (mk_reified_qf_equ lhs rhs) =>
+        { wf_lhs : wf_term typemap constmap [] lhs = true &
+          { wf_rhs : wf_term typemap constmap [] rhs = true &
+             generate_theorem [] lhs rhs wf_lhs wf_rhs } }
     end.
 
   Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Type :=
@@ -5569,14 +5657,22 @@ Section WithConstmap.
     simpl in EVM.
     injection EVM. clear EVM. intros ET EH.
     eapply IHcs. 1: exact ET.
+    unfold required_evidence in EH.
     destruct a.
     - (* CSaturateL2R *)
       destruct thm as [tvm t lhsP rhsP].
-      unfold required_evidence in EH.
       destruct evh as [ev_stmt ev_get].
       simpl in *. subst ev_stmt.
       destruct ev_get as (wf_lshP & wf_rhsP & thm_holds).
       eapply saturate_L2R_correct. 1: exact e_pf. exact thm_holds.
+    - (* CAddEqu *)
+      destruct thm as [lhs rhs].
+      destruct evh as [ev_stmt ev_get].
+      simpl in *. subst ev_stmt.
+      destruct ev_get as (wf_lsh & wf_rhs & thm_holds).
+      eapply merge_preserve in e_pf. 2: exact thm_holds.
+      unfold merge_terms, add_equ in *.
+      destruct add_term. destruct add_term. exact e_pf.
   Qed.
 
 End WithConstmap.
@@ -5693,16 +5789,18 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
-    Mut.make cm (let tm := @EGraphList.nil Type in
-                 @EGraphList.nil (dyn tm)).
+    (*
+    *)
+
+    reify_all.
+
+    (* to see what's hidden:
+    Arguments reified : clear implicits.
+    Arguments constmap_ref : clear implicits.
+    Set Printing Implicit. Unset Printing Records.
+    { *)
 
     Set Ltac Backtrace.
-
-    (* TODO test new reify_quantified_equality
-    Time reify_theorem tm cm new_th A1.
-    Time reify_theorem tm cm new_th2 eq_eq_True.
-    Time reify_theorem tm cm new_th3 H.
-    *)
   Abort.
 End WithLib.
 

@@ -1162,15 +1162,26 @@ Inductive reified_q_equ :=
 Inductive reified_qf_equ :=
 | mk_reified_qf_equ{t : type}(lhs rhs : term t).
 
-Inductive command :=
-| CSaturateL2R(thm: reified_q_equ)
-| CAddEqu(thm: reified_qf_equ).
+Inductive command_name :=
+| CSaturateL2R
+| CAddEqu.
 (* later:
-| CSaturateR2L(thm: reified_equality)
-| CSaturateNoNewTerms(thm: reified_equality)
+| CSaturateR2L
+| CSaturateNoNewTerms
 | CComputeGroundTerms
 ...
 *)
+
+Definition command_arg (c : command_name) : Type :=
+  match c with
+  | CSaturateL2R => reified_q_equ
+  | CAddEqu => reified_qf_equ
+  end.
+
+Record command := mk_command {
+  get_command_name : command_name;
+  get_command_arg : command_arg get_command_name;
+}.
 
 Module Mut.
   Definition mut {T : Type} (x : T) := unit.
@@ -1215,7 +1226,7 @@ Ltac make_varmap :=
   end.
 
 Ltac ltac_map f l :=
-  match l with
+  lazymatch l with
   | ?t :: ?q =>
     let newt := f t in
     let rest := ltac_map f q in
@@ -1226,7 +1237,6 @@ Ltac ltac_map f l :=
 Ltac lift_dynelement typemap e :=
   lazymatch e with
   | mk_dyn _ ?dt ?dv => constr:(mk_dyn typemap dt dv)
-  | _ => fail
   end.
 
 Ltac reify_theorem_let typemap constmap new_th H :=
@@ -5613,8 +5623,8 @@ Ltac reify_all :=
 
 Definition apply_command (e : egraph) (c : command) : egraph :=
   match c with
-  | CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
-  | CAddEqu (mk_reified_qf_equ lhs rhs) => add_equ lhs rhs e
+  | mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
+  | mk_command CAddEqu (mk_reified_qf_equ lhs rhs) => add_equ lhs rhs e
   end.
 
 Definition apply_commands : list command -> egraph -> egraph :=
@@ -5626,17 +5636,61 @@ Record dyn_proof := mk_dyn_hyp {
   dyn_proof_get : dyn_proof_stmt
 }.
 
+(* Note: DON'T do this:
+
+Record command_with_evidence := mk_command_with_evidence {
+  get_command : command;
+  actual_lemma_type : Type;
+  get_evidence : actual_lemma_type;
+}.
+
+because feeding a `list command_with_evidence` to the saturation procedure is a bad idea,
+because the arguments of the saturation procedure will be vm_computed.
+Instead, we use two lists of equal length: One for the data to be fed to the saturation
+procedure (and thus to vm_compute), and one for the data to be fed to conversion
+(ie the checks that reification was done correctly).
+*)
+
+Ltac dyn_proof_to_command p :=
+  lazymatch p with
+  | mk_dyn_hyp (@reified ?P ?R ?reif) ?hypname =>
+      (* Currently, we can infer to command from the type of reif, but later,
+         the argument passed to this ltac will also have to specify the command *)
+      let cmdName := lazymatch R with
+                     | reified_q_equ => constr:(CSaturateL2R)
+                     | reified_qf_equ => constr:(CAddEqu)
+                     end in
+      constr:(mk_command cmdName reif)
+  end.
+
+Ltac dyn_proofs_to_commands pfs := ltac_map ltac:(dyn_proof_to_command) pfs.
+
+(* TODO use Seq command combinator instead of (@cons command), which will allow us
+   to get rid of `nop` at the end of sequences *)
+Declare Custom Entry sponge_command.
+Declare Scope sponge_scope.
+Local Open Scope sponge_scope.
+
+Notation "{{ x }}" := x (x custom sponge_command at level 10) : sponge_scope.
+Notation "a ; b" := (@cons dyn_proof a b)
+  (in custom sponge_command at level 5, right associativity,
+   b custom sponge_command at level 5).
+Notation "'nop'" := (@nil dyn_proof)
+  (in custom sponge_command at level 5).
+Notation "H" := (mk_dyn_hyp _ H)
+  (in custom sponge_command at level 0, H ident).
+
 Section WithConstmap.
   Context {typemap : list Type}.
   Context (constmap: list (dyn typemap)).
 
   Definition required_evidence(c: command): Type :=
     match c with
-    | CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) =>
+    | mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) =>
         { wf_lhsP : wf_term typemap constmap tvm lhsP = true &
           { wf_rhsP : wf_term typemap constmap tvm rhsP = true &
              generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP } }
-    | CAddEqu (mk_reified_qf_equ lhs rhs) =>
+    | mk_command CAddEqu (mk_reified_qf_equ lhs rhs) =>
         { wf_lhs : wf_term typemap constmap [] lhs = true &
           { wf_rhs : wf_term typemap constmap [] rhs = true &
              generate_theorem [] lhs rhs wf_lhs wf_rhs } }
@@ -5646,8 +5700,8 @@ Section WithConstmap.
     map dyn_proof_stmt ev = map required_evidence cs.
 
   Lemma apply_commands_correct: forall (cs : list command) (ev : list dyn_proof)
-        (EVM : evidence_matches ev cs)
         (e : egraph)
+        (EVM : evidence_matches ev cs)
         (e_pf : invariant_egraph typemap constmap e),
     invariant_egraph typemap constmap (apply_commands cs e).
   Proof.
@@ -5658,7 +5712,8 @@ Section WithConstmap.
     injection EVM. clear EVM. intros ET EH.
     eapply IHcs. 1: exact ET.
     unfold required_evidence in EH.
-    destruct a.
+    destruct a as [name thm].
+    destruct name.
     - (* CSaturateL2R *)
       destruct thm as [tvm t lhsP rhsP].
       destruct evh as [ev_stmt ev_get].
@@ -5678,6 +5733,8 @@ Section WithConstmap.
 End WithConstmap.
 
 End Temp.
+
+Local Open Scope sponge_scope.
 
 Require Coq.Lists.List. Import List.ListNotations.
 Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
@@ -5793,6 +5850,31 @@ Section WithLib.
     *)
 
     reify_all.
+
+    lazymatch goal with
+    | cm: @constmap_ref (let tmName := ?tm in let cmName := @?constmapFun tmName in tt)
+      |- _ => pose tm as tmName;
+              let cm' := beta1 constmapFun tmName in
+              pose cm' as cmName;
+              clear cm
+    end.
+    pose empty_egraph as sponge.
+    assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
+
+
+    let pfs := constr:({{C1; A1; firstn_O; firstn_cons; nop}}) in
+    let cmds := dyn_proofs_to_commands pfs in
+    lazymatch goal with
+    | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
+        eapply (@apply_commands_correct tm cm cmds pfs e) in Inv
+    end.
+
+(* TODO:
+references to lemmas need to put required_evidence into the dyn,
+not just they hyp itself
+*)
+
+    Fail 2: reflexivity.
 
     (* to see what's hidden:
     Arguments reified : clear implicits.

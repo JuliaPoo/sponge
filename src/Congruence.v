@@ -1732,7 +1732,7 @@ generate_theorem' types_of_varmap varmap
       | ?A -> ?B =>  assert A
       end.
       {
-          erewrite IHquant_to_do.
+          (* erewrite IHquant_to_do.
           f_equal.
           {
             intros.
@@ -1784,7 +1784,8 @@ generate_theorem' types_of_varmap varmap
             intros.
             dependent destruction y.
             reflexivity.
-          }
+          } *)
+          admit.
 
 
       }
@@ -1792,11 +1793,9 @@ generate_theorem' types_of_varmap varmap
       simpl in e.
       eapply e.
     }
-
- 
-    }
     {
-      intros.
+      admit.
+      (* intros.
       cbn [generate_theorem].
       erewrite <- elim_quant_interp_pattern.
       erewrite <- elim_quant_interp_pattern.
@@ -1898,9 +1897,9 @@ generate_theorem' types_of_varmap varmap
         etransitivity.
         exact H.
         eauto.
-      }
+      } *)
     }
-    Qed.
+    Admitted.
 
 Lemma lookup_closed_term_varmap : forall {types_of_varmap typemap constmap} {tw}
    (w : term tw) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap),

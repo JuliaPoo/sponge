@@ -924,9 +924,9 @@ Section egraphs.
     (* and eid is canonical*)
       find (uf e) eid = eid ->
       (* There exists a term represented by that class *)
-      match PTree.get eid (id2s e) with 
-      | None => False 
-      | Some (_, tp, _) => 
+      match PTree.get eid (id2s e) with
+      | None => False
+      | Some (_, tp, _) =>
         exists (t : term tp), @lookup_term [] HNil _ t e = Some eid /\
                                   wf_term typemap constmap [] t = true
                                   end;
@@ -1279,12 +1279,6 @@ end.
     exact ({| T := _; state := y (state x) |}).
 Defined. *)
 
-
-
-Section Potentials.
-  (* Context {typemap : list Type}.
-  Context {constmap: list (dyn typemap)}. *)
-
   Fixpoint dropNone {A:Type} (l : list (option A))  : list A :=
     match l with
     | Some a :: b => a :: dropNone b
@@ -1292,7 +1286,7 @@ Section Potentials.
     | _ => nil
     end.
 
-  Definition FUEL := 30.
+  Definition FUEL := 30%nat.
 
 (* I will do translation validation for hte match pattern, that will be the easiest.
 Validator will simply return a boolean if the candidate matches the pattern and hence if the fn is correct *)
@@ -1414,6 +1408,40 @@ Definition saturate_1LtoR_aux
   egraph :=
   let (e, rootR) := add_term qInsts e pr in
   merge e rootL rootR.
+
+Fixpoint llist_all_Some {A B : Type} {l : list A} (ll : llist (option B) l)
+  : option (llist B l).
+  destruct l.
+  - exact (Some HNil).
+  - inversion ll. subst.
+    refine (match v with
+            | Some b => match llist_all_Some _ _ _ cdr with
+                        | Some rest => Some _
+                        | None => None
+                        end
+            | None => None
+            end).
+    econstructor.
+    1: exact b. exact rest.
+Defined.
+
+(* saturate left-to-right with 1 match of an equality theorem *)
+Definition saturate_1LtoR (types_of_varmap: list type) {t} (pR : term t) (e : egraph)
+           (matchL : Prod eclass_id (llist (option eclass_id) types_of_varmap))
+  : egraph :=
+  let 'prod rootL qInsts := matchL in
+  match llist_all_Some qInsts with
+  | Some qInsts => saturate_1LtoR_aux types_of_varmap t rootL qInsts pR e
+  | None => e (* if a variable only appears in the RHS, it won't be instantiated
+                 by matching the LHS against all terms, so it will remain None,
+                 and in this case, we don't use the lemma to saturate *)
+  end.
+
+(* saturate left-to-right with all matches of an equality theorem *)
+Definition saturate_LtoR (types_of_varmap: list type) {t} (pL pR : term t) (e : egraph)
+  : egraph :=
+  let matches := match_pattern_any_root FUEL types_of_varmap e t pL in
+  fold_left (saturate_1LtoR types_of_varmap pR) matches e.
 
 Definition constmap_app (tm tm_ext : list Type)
            (constmap : list (dyn tm)) (ext: list (dyn (tm ++ tm_ext))) :
@@ -1592,9 +1620,9 @@ Fixpoint subst_pattern {et t0}
       simpl in *.
       destruct (type_eq_dec t t0).
       - subst. exact replacement_term.
-      - 
+      -
       (* Garbage in, garbage out *)
-        exact (TVar 1 t). 
+        exact (TVar 1 t).
     }
     {
       eapply TVar.
@@ -1660,23 +1688,23 @@ induction t.
 }
 Qed.
 
-Lemma elim_quant_generate_theorem : 
+Lemma elim_quant_generate_theorem :
 forall {typemap types_of_varmap tHole t}
 varmap constmap types_of_varmap_remaining
 (hole : term tHole) wfH
-(pL pR : term t)  
+(pL pR : term t)
 wfL wfR
 ,
   generate_theorem' (tHole::types_of_varmap) (HCons (t_denote typemap tHole) (interp_term typemap constmap [] HNil hole wfH) varmap)
        types_of_varmap_remaining t pL pR wfL wfR =
 generate_theorem' types_of_varmap varmap
-       types_of_varmap_remaining t (subst_pattern pL hole) (subst_pattern pR hole) 
+       types_of_varmap_remaining t (subst_pattern pL hole) (subst_pattern pR hole)
        (subst_pattern_preserve_wf _ _ _ _ wfL wfH)
        (subst_pattern_preserve_wf _ _ _ _ wfR wfH)
         .
         Admitted.
-(*     
-    intros typemap quant_to_do t_quantifiermap. 
+(*
+    intros typemap quant_to_do t_quantifiermap.
     change ((fix app (l m : list (deep_type )) {struct l} :
            list (deep_type ) :=
          match l with
@@ -1747,7 +1775,7 @@ generate_theorem' types_of_varmap varmap
         generalize y.
         clear y.
         pose app_assoc'.
-        
+
         specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
         simpl in e.
         rewrite <- e.
@@ -1766,7 +1794,7 @@ generate_theorem' types_of_varmap varmap
       eapply eqPropType.
       Require Import Coq.Logic.PropExtensionality.
       pose propositional_extensionality.
-      match goal with 
+      match goal with
       | [ |- ?a = ?b] => set a; set b end.
       specialize (e P P0).
       (* Upcaster from P = P0 in Prop, to P = P0 in type*)
@@ -1778,7 +1806,7 @@ generate_theorem' types_of_varmap varmap
         intros.
         (* This was surprisingly tricky the first time *)
         assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
-                = 
+                =
                 interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
         clear H.
         {
@@ -1797,7 +1825,7 @@ generate_theorem' types_of_varmap varmap
           reflexivity.
         }
         assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
-                = 
+                =
                 interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
         {
           f_equal.
@@ -1821,7 +1849,7 @@ generate_theorem' types_of_varmap varmap
       {
         intros.
         assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
-                = 
+                =
                 interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
         clear H.
         {
@@ -1840,7 +1868,7 @@ generate_theorem' types_of_varmap varmap
           reflexivity.
         }
         assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
-                = 
+                =
                 interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
         {
           f_equal.
@@ -1861,9 +1889,9 @@ generate_theorem' types_of_varmap varmap
         etransitivity.
         exact H.
         eauto.
-      } 
+      }
     }
-    Qed. *) 
+    Qed. *)
 
 Lemma lookup_subst : forall {types_of_varmap} e (v : eclass_id) tl (varmap : llist eclass_id types_of_varmap)
 rootL (pL : term tl) {tw} (w : term tw) ,
@@ -1945,27 +1973,8 @@ Proof.
     inversion H.
     subst.
     eauto.
-    Admitted.
-  
+Admitted.
 
-Definition saturate_LtoR_aux : forall
-  {typemap} ctx quantifiermap t' (p pnew : Pattern (typemap:= typemap) (ctx:=ctx) (quantifiermap:=quantifiermap) t')
-  (e : egraph )
-  ,
-  (egraph )
-  .
-  intros.
-  pose (match_pattern_aux (typemap := typemap) FUEL ctx quantifiermap  e  _ p).
-  (* refine (fold_left (fun acc m1 => _ ) (firstn 1 l) e). *)
-  refine (fold_left (fun acc m1 => _ ) ( l) e).
-  (* refine (fold_right (fun m1 acc => _ )  e l). *)
-  (* We don't want to saturate if the pattern does not make sense anymore? *)
-  eapply saturate_1LtoR_aux.
-  exact p.
-  exact pnew.
-  exact acc.
-  exact m1.
-Defined.
 (*
 Lemma preserve : forall   {typemap} ctx quanttype t' input e p pnew,
 match propose_formula ctx e FUEL (fstP input), deeplist2_from_deeplisteclass quanttype (sndP input) e with
@@ -1981,9 +1990,7 @@ match propose_formula ctx (saturate_LtoR_aux ctx quanttype t' p pnew e) FUEL (fs
   =
   interp_formula ctx f
 | _, _ => True
-end. *)
-
-
+end.
 
 Definition saturate_L2R_correct : forall
   {typemap} ctx quantifiermap t' p pnew
@@ -2151,6 +2158,7 @@ Definition get_tm {typemap : list Type} {ctx : asgn typemap} (r : @reifed_obj ty
 Definition get_ctx {typemap : list Type} {ctx : asgn typemap} (r : @reifed_obj typemap ctx) := ctx.
 
 Definition empty_theorem (typemap : list Type) (ctx : asgn typemap) : list (@reifed_obj typemap ctx) := nil.
+
 Ltac add_theorem identtm identvm list_th new_th :=
   let temp := fresh "temp" in
   rename list_th into temp;
@@ -2552,8 +2560,6 @@ Ltac prove_eq goalLHS goalRHS i1 :=
     end
   end.
 
-
-
 (*  *)
 (* Time reify_hyp1 sep_comm tm vm. *)
 
@@ -2583,7 +2589,6 @@ Ltac lift_for_goal tm vm lhs rhs list_th :=
   pose term as list_th;
   subst temp
   .
-
 
 Ltac saturate_rec current_sponge name_sponge list_th :=
   let list_th := eval hnf in list_th in
@@ -5330,7 +5335,7 @@ Ltac reify_theorem typemap constmap new_th H :=
     subst oldtypemap;
     Mut.put constmap constmap_e;
     idtac.
-
+*)
 
 End Temp.
 
@@ -5446,12 +5451,13 @@ Section WithLib.
 
     pose (@EGraphList.nil Type) as tm.
     pose (@EGraphList.nil (dyn tm)) as cm.
-    Time reify_theorem  tm cm new_th A1.
+    Time reify_theorem tm cm new_th A1.
     Time reify_theorem tm cm new_th2 eq_eq_True.
     Time reify_theorem tm cm new_th3 H.
+  Abort.
+End WithLib.
 
-
-
+(* OLD CODE:
 
 Require Import Lia.
 Definition travel_value :
@@ -6086,3 +6092,4 @@ forall {typemap quant_to_do t_quantifiermap}
       }
     }
     Qed.
+*)

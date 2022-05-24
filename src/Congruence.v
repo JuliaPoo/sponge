@@ -1893,12 +1893,96 @@ generate_theorem' types_of_varmap varmap
     }
     Qed. *)
 
-Lemma lookup_subst : forall {types_of_varmap} e (v : eclass_id) tl (varmap : llist eclass_id types_of_varmap)
-rootL (pL : term tl) {tw} (w : term tw) ,
+Lemma lookup_closed_term_varmap : forall {types_of_varmap typemap constmap} {tw}
+   (w : term tw) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap),
+wf_term typemap constmap [] w = true ->
+    @lookup_term [] HNil _ w e = Some v ->
+    lookup_term varmap w e = Some v.
+    induction w.
+    {
+      intros.
+      simpl in *.
+      eapply Bool.andb_true_iff in H.
+      destruct H.
+      destruct lookup_term eqn:? in H0.
+      2:{ inversion H0. }
+      destruct lookup_term eqn:? in H0 .
+      2:{ inversion H0. }
+      erewrite IHw1; eauto.
+      erewrite IHw2; eauto.
+    }
+    {
+      simpl.
+      intros.
+      destruct ((Pos.to_nat n - 1)%nat) in H; inversion H.
+    }
+    {
+      simpl.
+      eauto.
+    }
+    Qed.
+
+Lemma lookup_subst : forall {types_of_varmap typemap constmap} tl (pL : term tl) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap)
+rootL  {tw} (w : term tw) ,
+wf_term typemap constmap (tw::types_of_varmap) pL = true ->
+wf_term typemap constmap [] w = true ->
 @lookup_term (tw::types_of_varmap) (HCons ((fun _ => eclass_id) tw) v varmap) _ pL  e = Some rootL ->
     @lookup_term [] HNil _ w e = Some v ->
     lookup_term varmap (subst_pattern pL w) e = Some rootL.
-    Admitted.
+    induction pL.
+    {
+      intros.
+      simpl in *.
+      destruct lookup_term eqn:? in H1.
+      2:{ inversion H1. }
+      destruct lookup_term eqn:? in H1 .
+      2:{ inversion H1. }
+      erewrite IHpL1; eauto.
+      - 
+      erewrite IHpL2; eauto.
+      eapply Bool.andb_true_iff in H; eauto.
+      eapply H.
+      -
+      eapply Bool.andb_true_iff in H; eauto.
+      eapply H.
+    }
+    2:{
+      intros.
+      simpl in *.
+      eauto.
+    }
+    {
+      intros.
+      simpl in *.
+      destruct (match n with
+        | 1 => true
+        | _ => false
+        end) eqn:?.
+      - destruct n; try discriminate.
+        simpl in H.
+        destruct (type_eq_dec) in H.
+        2:{ inversion H. }
+        subst.
+        destruct (type_eq_dec) ; intuition eauto.
+        dependent destruction e0.
+        unfold eq_rec_r,eq_rec, eq_sym, eq_rect.
+        unfold llist_nth_error in H1.
+        simpl in H1.
+        unfold eq_rect_r, eq_rect, eq_sym in H1.
+        inversion H1.
+        subst.
+        eapply lookup_closed_term_varmap; eauto.
+      -
+        replace ((Pos.to_nat n - 1)%nat) with (S (Pos.to_nat (n - 1) - 1)) in H.
+        2:{ destruct n; intuition lia. }
+        unfold llist_nth_error in H1.
+        destruct (nth_error) eqn:? in H.
+        2:{ inversion H. }
+        replace ((Pos.to_nat n - 1)%nat) with (S (Pos.to_nat (n - 1) - 1)) in H1.
+        2:{ destruct n; intuition lia. }
+        eauto.
+    }
+    Qed.
 
 Lemma saturate_1LtoR_correct : forall
     {typemap} constmap (types_of_varmap : list type) t

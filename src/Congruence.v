@@ -924,8 +924,12 @@ Section egraphs.
     (* and eid is canonical*)
       find (uf e) eid = eid ->
       (* There exists a term represented by that class *)
-        exists tp (t : term tp), @lookup_term [] HNil _ t e = Some eid /\
-                                  wf_term typemap constmap [] t = true ;
+      match PTree.get eid (id2s e) with 
+      | None => False 
+      | Some (_, tp, _) => 
+        exists (t : term tp), @lookup_term [] HNil _ t e = Some eid /\
+                                  wf_term typemap constmap [] t = true
+                                  end;
 
       nobody_outside :
        forall a (eid : eclass_id),
@@ -940,11 +944,14 @@ Section egraphs.
           lookup e (EApp e1 e2) = Some eid ->
           (find (uf e) e1 < max_allocated e)%positive /\
           (find (uf e) e2 < max_allocated e)%positive;
+
       sanely_assigned_lookup :
             n2idCanonical e;
+
       uf_id_outside :
         forall (a: eclass_id), (a >= max_allocated e)%positive ->
           classIsCanonical e a;
+
       wt_egraph:
         forall {t1 t2} (f : term t1) (g : term t2) (c : eclass_id)
         (wf_f : wf_term typemap constmap [] f = true)
@@ -952,11 +959,13 @@ Section egraphs.
         @lookup_term [] HNil _ f e = Some c ->
         @lookup_term [] HNil _ g e = Some c ->
         t1 = t2;
+
       wf_uf:
         forall (c : eclass_id),
           (c < max_allocated e)%positive ->
           (find (uf e) c < max_allocated e)%positive;
       }.
+
   Global Arguments invariant_egraph : clear implicits.
   Lemma add_term_safe : forall {t} (f : term t) e ,
     invariant_egraph e ->
@@ -1566,7 +1575,302 @@ Proof.
   }
   Qed.
 
+Fixpoint subst_pattern {et t0}
+  (p : term et)
+  (replacement_term : term t0)
+   :
+  term et.
+  induction p.
+  {
+    eapply (TApp
+        (subst_pattern _ _ p1 replacement_term )
+        (subst_pattern _ _ p2 replacement_term )).
+  }
+  {
+    destruct (n =? 1).
+    {
+      simpl in *.
+      destruct (type_eq_dec t t0).
+      - subst. exact replacement_term.
+      - 
+      (* Garbage in, garbage out *)
+        exact (TVar 1 t). 
+    }
+    {
+      eapply TVar.
+      (* Shift *)
+      exact (n - 1).
+    }
+  }
+  {
+    eapply TConst.
+    eapply n.
+  }
+  Defined.
 
+Lemma subst_pattern_preserve_wf : forall {typemap constmap types_of_varmap} (tp : type)
+(t : term tp) (tp_hole: type) (hole : term tp_hole),
+ wf_term typemap constmap (tp_hole :: types_of_varmap) t = true ->
+ wf_term typemap constmap [] hole = true ->
+wf_term typemap constmap types_of_varmap (subst_pattern t hole) = true.
+induction t.
+{
+  simpl in *.
+  intros.
+  eapply Bool.andb_true_iff in H.
+  destruct H.
+  erewrite IHt1; eauto.
+}
+{
+  intros.
+  simpl in *.
+  destruct (nth_error) eqn:? in H.
+  2:{ inversion H. }
+  destruct type_eq_dec in H. 2:{ inversion H. }
+  subst.
+  destruct (match n with
+      | 1 => true
+      | _ => false
+      end) eqn:?.
+  - destruct n; try discriminate.
+    simpl in Heqo.
+    inversion Heqo.
+    subst.
+    destruct type_eq_dec; try firstorder.
+    dependent destruction e.
+    change (types_of_varmap) with ([] ++ types_of_varmap).
+    eapply weaken_varmap_wf_term.
+    exact H0.
+  -
+    replace ((Pos.to_nat n - 1)%nat) with (S (Pos.to_nat (n - 1) - 1)) in Heqo .
+    2:{
+      destruct n; lia.
+    }
+    simpl in Heqo.
+    simpl.
+    rewrite Heqo.
+    destruct type_eq_dec; try firstorder.
+}
+{
+  simpl; intros.
+  destruct (nth_error) eqn:? in H.
+  2:{ inversion H. }
+  rewrite Heqo.
+  eauto.
+}
+Qed.
+
+Lemma elim_quant_generate_theorem : 
+forall {typemap types_of_varmap tHole t}
+varmap constmap types_of_varmap_remaining
+(hole : term tHole) wfH
+(pL pR : term t)  
+wfL wfR
+,
+  generate_theorem' (tHole::types_of_varmap) (HCons (t_denote typemap tHole) (interp_term typemap constmap [] HNil hole wfH) varmap)
+       types_of_varmap_remaining t pL pR wfL wfR =
+generate_theorem' types_of_varmap varmap
+       types_of_varmap_remaining t (subst_pattern pL hole) (subst_pattern pR hole) 
+       (subst_pattern_preserve_wf _ _ _ _ wfL wfH)
+       (subst_pattern_preserve_wf _ _ _ _ wfR wfH)
+        .
+        Admitted.
+(*     
+    intros typemap quant_to_do t_quantifiermap. 
+    change ((fix app (l m : list (deep_type )) {struct l} :
+           list (deep_type ) :=
+         match l with
+         | nil => m
+         | a :: l1 => a :: app l1 m
+         end) t_quantifiermap quant_to_do) with ( t_quantifiermap ++ quant_to_do).
+         revert t_quantifiermap.
+    induction quant_to_do.
+    2:{
+      intros.
+      specialize (IHquant_to_do (t_quantifiermap ++ (cons a nil))).
+      specialize IHquant_to_do with (ctx:=ctx) (t0 := t0) (rett:= rett).
+      specialize (IHquant_to_do) with (v:= v).
+      simpl.
+      Require Import Coq.Logic.FunctionalExtensionality.
+      pose @forall_extensionality.
+      set (eq_rect _ _ _ _ _) as p_transported.
+      set (eq_rect _ _ _ _ _) as pnew_transported.
+      set (eq_rect _ _ _ _ _) as app_p_transported.
+      set (eq_rect _ _ _ _ _) as app_pnew_transported.
+      assert ( forall (x : t_denote a),
+                (fun x => generate_theorem rett quant_to_do (t0 :: t_quantifiermap ++ (cons a nil)) (DCons t0 (interp_formula ctx v) (add_end ql x)) p_transported
+                  pnew_transported ) x=
+                (fun x => generate_theorem rett quant_to_do (t_quantifiermap ++ (cons a nil)) (add_end ql x) (app_p_transported) (app_pnew_transported)) x).
+      intros.
+      erewrite IHquant_to_do.
+      f_equal.
+      {
+        intros.
+        rewrite H5.
+        rewrite H6.
+        reflexivity.
+      }
+      {
+        subst app_p_transported.
+        subst p_transported.
+        unfold app_assoc'.
+        unfold eq_rect, eq_trans, f_equal.
+        remember (list_ind _ _ _ _ ).
+        clear.
+        revert v.
+        revert p.
+        revert rett.
+        revert t0.
+        simpl in y.
+        generalize y.
+        clear y.
+        pose app_assoc'.
+        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
+        simpl in e.
+        rewrite <- e.
+        intros.
+        dependent destruction y.
+        reflexivity.
+      }
+      {
+        subst app_pnew_transported.
+        subst pnew_transported.
+        unfold app_assoc'.
+        unfold eq_rect, eq_trans, f_equal.
+        remember (list_ind _ _ _ _ ).
+        clear.
+        revert v.
+        revert pnew.
+        revert rett.
+        revert t0.
+        simpl in y.
+        generalize y.
+        clear y.
+        pose app_assoc'.
+        
+        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
+        simpl in e.
+        rewrite <- e.
+        intros.
+        dependent destruction y.
+        reflexivity.
+      }
+      specialize (e _ _  _ H).
+      apply e.
+    }
+    {
+      intros.
+      cbn [generate_theorem].
+      erewrite <- elim_quant_interp_pattern.
+      erewrite <- elim_quant_interp_pattern.
+      eapply eqPropType.
+      Require Import Coq.Logic.PropExtensionality.
+      pose propositional_extensionality.
+      match goal with 
+      | [ |- ?a = ?b] => set a; set b end.
+      specialize (e P P0).
+      (* Upcaster from P = P0 in Prop, to P = P0 in type*)
+      eapply e.
+      subst P P0.
+      clear e.
+      split.
+      {
+        intros.
+        (* This was surprisingly tricky the first time *)
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
+                = 
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
+        clear H.
+        {
+          f_equal.
+          remember (interp_formula ctx v).
+          unfold app_nil_r'.
+          simpl.
+          unfold eq_trans, f_equal.
+          remember (list_ind _ _ _ _ ).
+          generalize y.
+          clear Heqy.
+          clear y.
+          rewrite app_nil_r'.
+          intros.
+          dependent destruction y.
+          reflexivity.
+        }
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
+                = 
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
+        {
+          f_equal.
+          remember (interp_formula ctx v).
+          unfold app_nil_r'.
+          simpl.
+          unfold eq_trans, f_equal.
+          remember (list_ind _ _ _ _ ).
+          generalize y.
+          rewrite app_nil_r'.
+          intros.
+          dependent destruction y0.
+          reflexivity.
+        }
+        etransitivity .
+        exact H0.
+        etransitivity .
+        exact H.
+        eauto.
+      }
+      {
+        intros.
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
+                = 
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
+        clear H.
+        {
+          f_equal.
+          remember (interp_formula ctx v).
+          unfold app_nil_r'.
+          simpl.
+          unfold eq_trans, f_equal.
+          remember (list_ind _ _ _ _ ).
+          generalize y.
+          clear Heqy.
+          clear y.
+          rewrite app_nil_r'.
+          intros.
+          dependent destruction y.
+          reflexivity.
+        }
+        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
+                = 
+                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
+        {
+          f_equal.
+          remember (interp_formula ctx v).
+          unfold app_nil_r'.
+          simpl.
+          unfold eq_trans, f_equal.
+          remember (list_ind _ _ _ _ ).
+          generalize y.
+          rewrite app_nil_r'.
+          intros.
+          dependent destruction y0.
+          reflexivity.
+        }
+        etransitivity.
+        symmetry;
+        exact H0.
+        etransitivity.
+        exact H.
+        eauto.
+      } 
+    }
+    Qed. *) 
+
+Lemma lookup_subst : forall {types_of_varmap} e (v : eclass_id) tl (varmap : llist eclass_id types_of_varmap)
+rootL (pL : term tl) {tw} (w : term tw) ,
+@lookup_term (tw::types_of_varmap) (HCons ((fun _ => eclass_id) tw) v varmap) _ pL  e = Some rootL ->
+    @lookup_term [] HNil _ w e = Some v ->
+    lookup_term varmap (subst_pattern pL w) e = Some rootL.
+    Admitted.
 
 Lemma saturate_1LtoR_correct : forall
     {typemap} constmap (types_of_varmap : list type) t
@@ -1602,85 +1906,47 @@ Proof.
     assert (v < max_allocated e) as MA by admit.
     assert (find (uf e) v = v ) as F by admit.
     specialize (H MA F).
-    destruct H as (tp & w & L & Wf).
-    pose proof (@wt_egraph _ _ _ e_pf).
+    destruct (PTree.get) eqn:? in H. 2:{ inversion H. }
+    destruct p. destruct p.
+    destruct H as (w & L & Wf).
+    simpl in varmap_ok.
+    unfold eq_rect_r, eq_rect, eq_sym in varmap_ok.
+    eapply Bool.andb_true_iff in varmap_ok.
+    destruct varmap_ok.
+    unfold typecheck_eid in H.
+    rewrite Heqo in H.
+    eapply type_eqb_correct in H.
+    subst.
+    epose (interp_term _  _ [] HNil  _ Wf) as witness.
+    specialize (th_true witness).
+    unfold eq_rect_r, eq_rect, eq_sym in th_true.
+    unfold hlist_snoc,hlist_app in th_true.
+    subst witness.
+    pose @elim_quant_generate_theorem.
+    specialize (e1) with (types_of_varmap_remaining:= types_of_varmap).
+    specialize (e1) with (tHole:=a) (types_of_varmap := @nil type) (varmap := HNil).
+    simpl in e1.
+    specialize (e1) with (hole := w).
+    specialize (e1) with (wfH:= Wf).
+    specialize (e1) with (wfL:= wfL).
+    specialize (e1) with (wfR:= wfR).
+    rewrite e1 in th_true.
+    specialize (IHtypes_of_varmap) with (4:= th_true).
+    specialize (IHtypes_of_varmap _ e_pf rootL varmap H0).
+    eapply (lookup_subst) with (w:= w) in vtrue; eauto.
+    specialize (IHtypes_of_varmap vtrue).
+    move IHtypes_of_varmap at bottom.
+    unfold saturate_1LtoR_aux in IHtypes_of_varmap |- *.
 
-
-      eapply @interp_term.
-      - exact cdr.
-
-    }
-    interp_term
-    inversion varmap.
-    pose (propose_term constmap e 40 v).
-
-
-    dependent destruction input.
-    dependent destruction y.
-    cbv [fstP] in pf.
-    destruct v.
-    2:{ eauto.  }
-    specialize (IHquantifiermap) with (1:= e_pf).
-
-    destruct (propose_formula (t:=a) ctx e FUEL e0) eqn:?.
-    2:{ cbn - [propose_formula]. rewrite Heqo. eauto. }
-
-    specialize (th_true (interp_formula ctx f)).
-    cbn -[generate_theorem] in th_true.
-    assert (generate_theorem t' quantifiermap (cons a nil) (DCons a (interp_formula ctx f) DNil) p pnew).
-    exact th_true.
-    clear th_true.
-    rename X into th_true.
-    erewrite elim_quant_generate_theorem in th_true.
-    specialize (IHquantifiermap) with (input:=(prod x y)).
-    cbn -[ propose_formula] in IHquantifiermap.
-    simpl (sndP _) in pf.
-    remember (deeplist2_from_deeplisteclass _ _ _) in pf.
-    cbn -[propose_formula] in Heqo0.
-    unfold deeplist2_from_deeplisteclass, list_rect, eq_rect_r, eq_rect, f_equal, eq_sym in Heqo0.
-
-    assert (o = match  deeplist2_from_deeplisteclass quantifiermap y e with | Some a0 =>  match propose_formula ctx e FUEL e0 with
-            | Some a1 => Some (DCons2 a a1 a0)
-            | None => None
-            end
-        | None => None
-        end).
-    exact Heqo0.
-    clear Heqo0.
-    subst o.
-    rewrite Heqo in pf.
-    destruct (deeplist2_from_deeplisteclass quantifiermap y e) eqn:?.
-    2:{
-      specialize (IHquantifiermap) with (1 := pf).
-      specialize (IHquantifiermap) with (1 := th_true).
-      unfold saturate_1LtoR_aux, eq_rect_r, eq_rect, eq_sym, list_rect, f_equal, sndP .
-      rewrite Heqo.
-      eapply IHquantifiermap.
-    }
-    {
-      destruct (propose_formula ctx e FUEL x) eqn:?.
-      {
-        specialize (IHquantifiermap) with (2 := th_true).
-        rewrite Heqo1 in IHquantifiermap.
-        cbn in pf.
-        erewrite elim_quant_interp_pattern in pf.
-        unfold eq_rect_r, eq_rect, eq_sym, list_rect, f_equal, sndP in pf.
-        specialize (IHquantifiermap pf).
-        unfold saturate_1LtoR_aux, eq_rect_r, eq_rect, eq_sym, list_rect, f_equal, sndP .
-        rewrite Heqo.
-        eapply IHquantifiermap.
-      }
-      {
-        specialize (IHquantifiermap) with (2 := th_true).
-        rewrite Heqo1 in IHquantifiermap.
-        specialize (IHquantifiermap I).
-        unfold saturate_1LtoR_aux, eq_rect_r, eq_rect, eq_sym, list_rect, f_equal, sndP .
-        rewrite Heqo.
-        eapply IHquantifiermap.
-      }
-    }
-  }
-  Qed.
+    destruct (add_term ) eqn:? .
+    destruct (add_term ) eqn:? in |-* .
+    (* Little lwemma add_term subst *)
+    assert ((e4,e5) = (e2,e3)) by admit.
+    inversion H.
+    subst.
+    eauto.
+    Admitted.
+  
 
 Definition saturate_LtoR_aux : forall
   {typemap} ctx quantifiermap t' (p pnew : Pattern (typemap:= typemap) (ctx:=ctx) (quantifiermap:=quantifiermap) t')
@@ -5566,38 +5832,6 @@ else
       eauto.
     }
     eauto.
-  Defined.
-
-Fixpoint app_pattern {typemap t_quantifiermap ctx et t0}
-  (replacement_term : Formula (ctx:=ctx) t0)
-  (p : @Pattern typemap (t0::t_quantifiermap) ctx et) :
-  @Pattern typemap t_quantifiermap ctx et.
-  induction p.
-  {
-    eapply (PApp1
-        (app_pattern _ _ _ _ _ replacement_term p1)
-        (app_pattern _ _ _ _ _ replacement_term p2)).
-  }
-  {
-    destruct n.
-    {
-      simpl in *.
-      inversion e.
-      clear e.
-      subst.
-      eapply pattern_from_formula.
-      auto.
-    }
-    {
-      simpl in e.
-      eapply PVar.
-      eapply e.
-    }
-  }
-  {
-    eapply PAtom1.
-    eapply e.
-  }
   Defined.
 
 

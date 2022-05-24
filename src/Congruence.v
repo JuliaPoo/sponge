@@ -1687,7 +1687,7 @@ induction t.
 }
 Qed.
 Definition cast_hlist {typemap} l r: hlist
-     (map (t_denote typemap) l ++ map (t_denote typemap) r) -> 
+     (map (t_denote typemap) l ++ map (t_denote typemap) r) ->
 hlist
      (map (t_denote typemap) (l ++ r)).
      intros.
@@ -1696,7 +1696,7 @@ hlist
 Defined.
 Lemma elim_quant_generate_theorem :
 forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
-varmap constmap 
+varmap constmap
 (hole : term tHole) wfH
 (pL pR : term t)
 wfL wfR
@@ -1726,16 +1726,16 @@ generate_theorem' types_of_varmap varmap
       simpl.
 
       Require Import Coq.Logic.FunctionalExtensionality.
-      pose @forall_extensionality. 
+      pose @forall_extensionality.
       set (eq_ind _ _ _ _ _ ) as wfL_transported.
       set (eq_ind _ _ _ _ _ ) as wfR_transported.
       set (eq_ind _ _ _ _ _ ) as wfsubL_transported.
       set (eq_ind _ _ _ _ _ ) as wfsubR_transported.
-      match goal with 
+      match goal with
       | [ |- (forall (x : ?t), @?body1 x)= (forall y, @?body2 y)] =>
         specialize (e t body1 body2)
         end.
-      match type of e with 
+      match type of e with
       | ?A -> ?B =>  assert A
       end.
       {
@@ -1753,7 +1753,7 @@ generate_theorem' types_of_varmap varmap
           subst h0.
           unfold cast_hlist in IHtypes_of_varmap_remaining.
           move IHtypes_of_varmap_remaining at bottom.
-          match goal with 
+          match goal with
           | [H: generate_theorem' _ ?l _ _ _ _ _ _ = _ |- generate_theorem' _ ?r _ _ _ _  _ _ = _] =>
             assert (l = r)
             end.
@@ -1767,7 +1767,7 @@ generate_theorem' types_of_varmap varmap
                | [] => []
                | a :: t => t_denote typemap a :: map t
                end) types_of_varmap) with (map (t_denote typemap) types_of_varmap ) in varmap.
-            match goal with 
+            match goal with
             | [|- _ = eq_rect_r _ ?hsn _ ] => remember hsn
             end.
             unfold hlist_snoc at 1 in Heqh.
@@ -1855,7 +1855,7 @@ generate_theorem' types_of_varmap varmap
             intros.
             dependent destruction y.
             reflexivity.
-          } *) 
+          } *)
           admit.
 
 
@@ -5538,7 +5538,7 @@ Definition apply_commands : list command -> egraph -> egraph :=
 
 (* a dynamically typed proof *)
 Record dyn_proof := mk_dyn_hyp {
-  dyn_proof_stmt : Prop;
+  dyn_proof_stmt : Type;
   dyn_proof_get : dyn_proof_stmt
 }.
 
@@ -5546,15 +5546,15 @@ Section WithConstmap.
   Context {typemap : list Type}.
   Context (constmap: list (dyn typemap)).
 
-  Definition required_evidence(c: command): Prop :=
+  Definition required_evidence(c: command): Type :=
     match c with
     | CSaturateL2R (mk_reified_equality tvm lhsP rhsP) =>
-        exists (wf_lhsP : wf_term typemap constmap tvm lhsP = true)
-               (wf_rhsP : wf_term typemap constmap tvm rhsP = true),
-        generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP
+        { wf_lhsP : wf_term typemap constmap tvm lhsP = true &
+          { wf_rhsP : wf_term typemap constmap tvm rhsP = true &
+             generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP } }
     end.
 
-  Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Prop :=
+  Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Type :=
     map dyn_proof_stmt ev = map required_evidence cs.
 
   Lemma apply_commands_correct: forall (cs : list command) (ev : list dyn_proof)

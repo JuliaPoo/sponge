@@ -2074,15 +2074,19 @@ match propose_formula ctx (saturate_LtoR_aux ctx quanttype t' p pnew e) FUEL (fs
   interp_formula ctx f
 | _, _ => True
 end.
+*)
 
 Definition saturate_L2R_correct : forall
-  {typemap} ctx quantifiermap t' p pnew
+  {typemap} constmap (types_of_varmap : list type) t
+  (pL pR: term t)
+  (wfL : wf_term typemap constmap types_of_varmap pL = true)
+  (wfR : wf_term typemap constmap types_of_varmap pR = true)
   (e : egraph)
-  (e_pf: invariant_egraph (ctx:= ctx) e)
-  (th_true : generate_theorem (typemap:= typemap) t' quantifiermap nil DNil p pnew),
-   invariant_egraph (ctx:=ctx) (saturate_LtoR_aux ctx quantifiermap t' p pnew e ).
-   Admitted.
-   (* intros.
+  (e_pf: invariant_egraph typemap constmap e)
+  (th_true : generate_theorem types_of_varmap pL pR wfL wfR),
+  invariant_egraph typemap constmap (saturate_LtoR types_of_varmap pL pR e).
+Admitted. (*
+   intros.
    intros.
    unfold saturate_LtoR_aux.
    pose @saturate_1LtoR_correct.
@@ -2105,7 +2109,7 @@ Definition saturate_L2R_correct : forall
      inversion H.
 
    }
-   Qed. *)
+   Qed.
 
 Definition lift_pattern :
   forall (tm tmext : list Type)
@@ -5420,6 +5424,13 @@ Ltac reify_theorem typemap constmap new_th H :=
     idtac.
 *)
 
+Definition apply_command (e : egraph) (c : command) : egraph :=
+  match c with
+  | CSaturateL2R (mk_reified_equality tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
+  end.
+
+Definition apply_commands : list command -> egraph -> egraph :=
+  fold_left apply_command.
 
 (* a dynamically typed proof *)
 Record dyn_proof := mk_dyn_hyp {
@@ -5441,6 +5452,19 @@ Section WithConstmap.
 
   Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Prop :=
     map dyn_proof_stmt ev = map required_evidence cs.
+
+  Lemma apply_commands_correct: forall (cs : list command) (ev : list dyn_proof)
+        (EVM : evidence_matches ev cs)
+        (e : egraph)
+        (e_pf : invariant_egraph typemap constmap e),
+    invariant_egraph typemap constmap (apply_commands cs e).
+  Proof.
+    induction cs; intros. 1: exact e_pf.
+    unfold evidence_matches in EVM.
+    destruct ev as [|evh evt]. 1: discriminate EVM.
+    simpl in EVM.
+  Admitted.
+
 End WithConstmap.
 
 End Temp.

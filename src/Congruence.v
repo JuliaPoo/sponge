@@ -1686,7 +1686,14 @@ induction t.
   eauto.
 }
 Qed.
-
+Definition cast_hlist {typemap} l r: hlist
+     (map (t_denote typemap) l ++ map (t_denote typemap) r) -> 
+hlist
+     (map (t_denote typemap) (l ++ r)).
+     intros.
+     erewrite <- map_app in X.
+     exact X.
+Defined.
 Lemma elim_quant_generate_theorem :
 forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
 varmap constmap 
@@ -1732,7 +1739,71 @@ generate_theorem' types_of_varmap varmap
       | ?A -> ?B =>  assert A
       end.
       {
-          (* erewrite IHquant_to_do.
+          clear e.
+          intros.
+          set (hlist_snoc varmap x).
+          change ((fix map (l : list type) : list Type :=
+         match l with
+         | [] => []
+         | a :: t => t_denote typemap a :: map t
+         end) types_of_varmap) with (map (t_denote typemap) types_of_varmap ) in h.
+         change ([t_denote typemap a]) with (map (t_denote typemap ) [a]) in h.
+         pose (cast_hlist _ _ h).
+          specialize (IHtypes_of_varmap_remaining h0).
+          subst h0.
+          unfold cast_hlist in IHtypes_of_varmap_remaining.
+          move IHtypes_of_varmap_remaining at bottom.
+          match goal with 
+          | [H: generate_theorem' _ ?l _ _ _ _ _ _ = _ |- generate_theorem' _ ?r _ _ _ _  _ _ = _] =>
+            assert (l = r)
+            end.
+          {
+            subst h.
+
+            remember (interp_term _ _ _ _ _ _ ).
+            clear.
+            change ((fix map (l : list type) : list Type :=
+               match l with
+               | [] => []
+               | a :: t => t_denote typemap a :: map t
+               end) types_of_varmap) with (map (t_denote typemap) types_of_varmap ) in varmap.
+            match goal with 
+            | [|- _ = eq_rect_r _ ?hsn _ ] => remember hsn
+            end.
+            unfold hlist_snoc at 1 in Heqh.
+            simpl in Heqh.
+            unfold eq_rect_r, eq_rect, eq_sym in Heqh.
+            unfold hlist_snoc.
+            remember (hlist_app varmap (HCons (t_denote typemap a) x HNil)).
+            revert Heqh.
+            generalize h.
+            generalize h0.
+            clear.
+            intros.
+            dependent destruction h.
+            dependent destruction Heqh.
+            generalize h0.
+            clear.
+            change ([t_denote typemap a]) with (map (t_denote typemap) [a]).
+            generalize [a].
+            intro.
+            remember (map_app _ _ _).
+            generalize e.
+            clear.
+            unfold eq_rect_r at 2.
+            unfold eq_rect.
+            unfold eq_sym.
+            unfold eq_ind_r.
+            unfold eq_ind.
+            unfold eq_sym.
+            clear.
+            destruct e.
+            cbn.
+            eauto.
+        }
+
+          rewrite H in IHtypes_of_varmap_remaining.
+          (* rewrite IHtypes_of_varmap_remaining.
           f_equal.
           {
             intros.
@@ -1784,7 +1855,7 @@ generate_theorem' types_of_varmap varmap
             intros.
             dependent destruction y.
             reflexivity.
-          } *)
+          } *) 
           admit.
 
 

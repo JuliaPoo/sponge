@@ -1116,7 +1116,7 @@ Section TheoremGenerator.
     (* wf hypothesis: *)
     (wf_clc1 : wf_term typemap constmap (types_of_varmap ++ types_of_varmap_remaining) clc1 = true)
     (wf_clc2 : wf_term typemap constmap (types_of_varmap ++ types_of_varmap_remaining) clc2 = true)
-    : Prop .
+    : Type .
     destruct types_of_varmap_remaining as [| t_var types_of_varmap_remaining].
     -
       rewrite app_nil_r in wf_clc1.
@@ -1124,7 +1124,7 @@ Section TheoremGenerator.
       exact (interp_term typemap constmap types_of_varmap varmap clc1 wf_clc1 =
              interp_term typemap constmap types_of_varmap varmap clc2 wf_clc2).
     -
-      refine (forall (x : t_denote typemap t_var), (_:Prop)).
+      refine (forall (x : t_denote typemap t_var), (_:Type)).
       pose (hlist_snoc varmap x).
       change ([t_denote typemap t_var]) with (map (t_denote typemap)[t_var]) in h.
       rewrite <- map_app in h.
@@ -1148,7 +1148,7 @@ Section TheoremGenerator.
     (* wf hypothesis: *)
     (wf_clc1 : wf_term typemap constmap types_of_varmap clc1 = true)
     (wf_clc2 : wf_term typemap constmap types_of_varmap clc2 = true)
-    : Prop .
+    : Type.
     pose proof (generate_theorem' [] HNil types_of_varmap t clc1 clc2 wf_clc1 wf_clc2).
     exact X.
     Defined.
@@ -1688,8 +1688,8 @@ induction t.
 Qed.
 
 Lemma elim_quant_generate_theorem :
-forall {typemap types_of_varmap tHole t}
-varmap constmap types_of_varmap_remaining
+forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
+varmap constmap 
 (hole : term tHole) wfH
 (pL pR : term t)
 wfL wfR
@@ -1701,89 +1701,99 @@ generate_theorem' types_of_varmap varmap
        (subst_pattern_preserve_wf _ _ _ _ wfL wfH)
        (subst_pattern_preserve_wf _ _ _ _ wfR wfH)
         .
-        Admitted.
-(*
-    intros typemap quant_to_do t_quantifiermap.
-    change ((fix app (l m : list (deep_type )) {struct l} :
-           list (deep_type ) :=
-         match l with
-         | nil => m
-         | a :: l1 => a :: app l1 m
-         end) t_quantifiermap quant_to_do) with ( t_quantifiermap ++ quant_to_do).
-         revert t_quantifiermap.
-    induction quant_to_do.
+    induction types_of_varmap_remaining.
     2:{
       intros.
-      specialize (IHquant_to_do (t_quantifiermap ++ (cons a nil))).
-      specialize IHquant_to_do with (ctx:=ctx) (t0 := t0) (rett:= rett).
-      specialize (IHquant_to_do) with (v:= v).
+      specialize (IHtypes_of_varmap_remaining typemap ( types_of_varmap ++ cons a nil)).
+      specialize (IHtypes_of_varmap_remaining tHole) with (constmap:=constmap)  (t:= t).
+      specialize (IHtypes_of_varmap_remaining) with (hole:= hole).
+      pose wfL as savedWfL.
+      change (a :: types_of_varmap_remaining) with ([a] ++ types_of_varmap_remaining) in savedWfL.
+      rewrite app_assoc in savedWfL.
+      specialize (IHtypes_of_varmap_remaining) with (wfL:= savedWfL).
+       pose wfR as savedWfR.
+      change (a :: types_of_varmap_remaining) with ([a] ++ types_of_varmap_remaining) in savedWfR.
+      rewrite app_assoc in savedWfR.
+      specialize (IHtypes_of_varmap_remaining) with (wfR:= savedWfR).
+      specialize (IHtypes_of_varmap_remaining) with (wfH:= wfH).
       simpl.
-      Require Import Coq.Logic.FunctionalExtensionality.
-      pose @forall_extensionality.
-      set (eq_rect _ _ _ _ _) as p_transported.
-      set (eq_rect _ _ _ _ _) as pnew_transported.
-      set (eq_rect _ _ _ _ _) as app_p_transported.
-      set (eq_rect _ _ _ _ _) as app_pnew_transported.
-      assert ( forall (x : t_denote a),
-                (fun x => generate_theorem rett quant_to_do (t0 :: t_quantifiermap ++ (cons a nil)) (DCons t0 (interp_formula ctx v) (add_end ql x)) p_transported
-                  pnew_transported ) x=
-                (fun x => generate_theorem rett quant_to_do (t_quantifiermap ++ (cons a nil)) (add_end ql x) (app_p_transported) (app_pnew_transported)) x).
-      intros.
-      erewrite IHquant_to_do.
-      f_equal.
-      {
-        intros.
-        rewrite H5.
-        rewrite H6.
-        reflexivity.
-      }
-      {
-        subst app_p_transported.
-        subst p_transported.
-        unfold app_assoc'.
-        unfold eq_rect, eq_trans, f_equal.
-        remember (list_ind _ _ _ _ ).
-        clear.
-        revert v.
-        revert p.
-        revert rett.
-        revert t0.
-        simpl in y.
-        generalize y.
-        clear y.
-        pose app_assoc'.
-        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-        simpl in e.
-        rewrite <- e.
-        intros.
-        dependent destruction y.
-        reflexivity.
-      }
-      {
-        subst app_pnew_transported.
-        subst pnew_transported.
-        unfold app_assoc'.
-        unfold eq_rect, eq_trans, f_equal.
-        remember (list_ind _ _ _ _ ).
-        clear.
-        revert v.
-        revert pnew.
-        revert rett.
-        revert t0.
-        simpl in y.
-        generalize y.
-        clear y.
-        pose app_assoc'.
 
-        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-        simpl in e.
-        rewrite <- e.
-        intros.
-        dependent destruction y.
-        reflexivity.
+      Require Import Coq.Logic.FunctionalExtensionality.
+      pose @forall_extensionality. 
+      set (eq_ind _ _ _ _ _ ) as wfL_transported.
+      set (eq_ind _ _ _ _ _ ) as wfR_transported.
+      set (eq_ind _ _ _ _ _ ) as wfsubL_transported.
+      set (eq_ind _ _ _ _ _ ) as wfsubR_transported.
+      match goal with 
+      | [ |- (forall (x : ?t), @?body1 x)= (forall y, @?body2 y)] =>
+        specialize (e t body1 body2)
+        end.
+      match type of e with 
+      | ?A -> ?B =>  assert A
+      end.
+      {
+          erewrite IHquant_to_do.
+          f_equal.
+          {
+            intros.
+            rewrite H5.
+            rewrite H6.
+            reflexivity.
+          }
+          {
+            subst app_p_transported.
+            subst p_transported.
+            unfold app_assoc'.
+            unfold eq_rect, eq_trans, f_equal.
+            remember (list_ind _ _ _ _ ).
+            clear.
+            revert v.
+            revert p.
+            revert rett.
+            revert t0.
+            simpl in y.
+            generalize y.
+            clear y.
+            pose app_assoc'.
+            specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
+            simpl in e.
+            rewrite <- e.
+            intros.
+            dependent destruction y.
+            reflexivity.
+          }
+          {
+            subst app_pnew_transported.
+            subst pnew_transported.
+            unfold app_assoc'.
+            unfold eq_rect, eq_trans, f_equal.
+            remember (list_ind _ _ _ _ ).
+            clear.
+            revert v.
+            revert pnew.
+            revert rett.
+            revert t0.
+            simpl in y.
+            generalize y.
+            clear y.
+            pose app_assoc'.
+
+            specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
+            simpl in e.
+            rewrite <- e.
+            intros.
+            dependent destruction y.
+            reflexivity.
+          }
+
+
       }
-      specialize (e _ _  _ H).
-      apply e.
+      specialize (e H).
+      simpl in e.
+      eapply e.
+    }
+
+ 
     }
     {
       intros.
@@ -1890,7 +1900,7 @@ generate_theorem' types_of_varmap varmap
         eauto.
       }
     }
-    Qed. *)
+    Qed.
 
 Lemma lookup_closed_term_varmap : forall {types_of_varmap typemap constmap} {tw}
    (w : term tw) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap),

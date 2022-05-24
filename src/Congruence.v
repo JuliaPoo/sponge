@@ -1203,7 +1203,7 @@ Ltac lift_dynelement typemap e :=
   | _ => fail
   end.
 
-Ltac reify_theorem typemap constmap new_th H :=
+Ltac reify_theorem_let typemap constmap new_th H :=
     let oldtypemap := fresh "oldtm" in
     let oldconstmap := fresh "oldcm" in
     rename typemap into oldtypemap;
@@ -1251,7 +1251,7 @@ Goal (forall m n, (forall x y ,  x + y = y + x)  -> (forall x y, x * y = y * x) 
   intros.
   pose (@nil Type) as tm.
   pose (@nil (dyn tm)) as cm.
-  Time reify_theorem tm cm theorem H.
+  Time reify_theorem_let tm cm theorem H.
   Show Proof.
   Abort.
 
@@ -2017,7 +2017,7 @@ wf_term typemap constmap [] w = true ->
       destruct lookup_term eqn:? in H1 .
       2:{ inversion H1. }
       erewrite IHpL1; eauto.
-      - 
+      -
       erewrite IHpL2; eauto.
       eapply Bool.andb_true_iff in H; eauto.
       eapply H.
@@ -5463,46 +5463,70 @@ Section WithLib.
   let tH := type of H in
   assert (t = tH) .
   + Time reflexivity.
-
-(* ALTERNATIVE USING MUTABLE, WORKED AT SOME POINT: *)
-Ltac reify_theorem typemap constmap new_th H :=
-    let oldtypemap := fresh "oldtm" in
-    rename typemap into oldtypemap;
-    evar (typemap : list Type);
-    let oldconstmap_u := Mut.get constmap in
-    let constmap_e := open_constr:(_: list (dyn typemap)) in
-    evar (new_th: @reified_theorem typemap constmap_e);
-    let t := type of H in
-    let _ := open_constr:(ltac:(
-    let varmap := make_varmap in
-    lazymatch goal with
-    | [ |- ?g] =>
-    let oldtypemap_u := eval unfold oldtypemap in oldtypemap in
-    let tmap' := extend_typemap oldtypemap_u g in
-    let typemap_u := eval unfold typemap in typemap in
-    unify typemap_u tmap';
-    let types_of_varmap := match type of varmap with
-                            | hlist ?list_types => ltac_map ltac:(reify_type tmap') list_types
-                            end in
-    let lifted_oldconstmap0 := ltac_map ltac:(lift_dynelement typemap) oldconstmap_u in
-    let lifted_oldconstmap := constr:(lifted_oldconstmap0 : list (dyn typemap)) in
-    let cmap' := extend_constmap typemap varmap lifted_oldconstmap g in
-    unify constmap_e cmap';
-    lazymatch goal with
-    | [ |- ?lhs = ?rhs ] =>
-      let reified_lhs := reify_expr tmap' cmap' types_of_varmap varmap lhs in
-      let reified_rhs := reify_expr tmap' cmap' types_of_varmap varmap rhs in
-      let new_th_u := eval unfold new_th in new_th in
-
-      unify
-        (let cm := constmap_e in Build_reified_theorem (typemap := typemap) (constmap := cm) _ types_of_varmap reified_lhs reified_rhs eq_refl eq_refl H)
-        new_th_u
-    end
-    end; eapply H):t) in
-    subst oldtypemap;
-    Mut.put constmap constmap_e;
-    idtac.
 *)
+
+Notation "'subst!' y 'for' x 'in' f" :=
+  (match y with x => f end) (at level 10, f at level 200).
+
+Ltac beta1 func arg :=
+  lazymatch func with
+  | (fun a => ?f) => constr:(subst! arg for a in f)
+  end.
+
+Goal True.
+  (* We can swap rhs while body keeps referring to y: *)
+  lazymatch constr:(let x := 1 in x + x) with
+  | (let y := ?rhs in ?body) => let r := constr:(let y := 2 in body) in pose r
+  end.
+  (* but we can't match on `body`:
+  lazymatch constr:(let x := 1 in x + 2) with
+  | (let y := ?rhs in ?body) => let r := constr:(let y := 2 in
+      ltac:(lazymatch body with
+            | ?a + ?b => exact (b + a)
+            end)) in pose r
+  end.
+  *)
+  (* but with higher-order matching & beta1, we can: *)
+  lazymatch constr:(let x := 1 in x + 3) with
+  | (let y := ?rhs in @?body y) => let r := constr:(let y := 2 in ltac:(
+      let body' := beta1 body y in
+      lazymatch body' with
+      | ?a + ?b => exact(b + a)
+      end)) in pose r
+  end.
+Abort.
+
+(* Expects cmmut to be a mut cell of shape
+   (let tm := <typemap> in <constmap>). *)
+Ltac reify_quantified_equality cmmut t :=
+  let new_cm := open_constr:(_) in
+  let new_thm := open_constr:(_ : reified_equality) in
+  let __ := lazymatch Mut.get cmmut with
+  | (let tmName := ?oldtypemap_u in @?oldconstmapFun tmName) =>
+    open_constr:(ltac:(
+      let H := fresh in
+      intro H;
+      let varmap := make_varmap in
+      let g := lazymatch goal with |- ?g => g end in
+      let tmap' := extend_typemap oldtypemap_u g in
+      let types_of_varmap :=
+        match type of varmap with
+        | hlist ?list_types => ltac_map ltac:(reify_type tmap') list_types
+        end in
+      unify new_cm (let tmName := tmap' in ltac:(
+        let lifted_oldconstmap := beta1 oldconstmapFun tmName in
+        let cmap' := extend_constmap tmName varmap lifted_oldconstmap g in
+        let lhs := lazymatch goal with |- ?lhs = _ => lhs end in
+        let rhs := lazymatch goal with |- _ = ?rhs => rhs end in
+        let reified_lhs := reify_expr tmap' cmap' types_of_varmap varmap lhs in
+        let reified_rhs := reify_expr tmap' cmap' types_of_varmap varmap rhs in
+        unify new_thm (mk_reified_equality types_of_varmap reified_lhs reified_rhs);
+        exact cmap'));
+      eapply H
+    ) : t -> t)
+  end in
+  let __ := match constr:(O) with _ => Mut.put cmmut new_cm end in
+  new_thm.
 
 Definition apply_command (e : egraph) (c : command) : egraph :=
   match c with
@@ -5543,7 +5567,17 @@ Section WithConstmap.
     unfold evidence_matches in EVM.
     destruct ev as [|evh evt]. 1: discriminate EVM.
     simpl in EVM.
-  Admitted.
+    injection EVM. clear EVM. intros ET EH.
+    eapply IHcs. 1: exact ET.
+    destruct a.
+    - (* CSaturateL2R *)
+      destruct thm as [tvm t lhsP rhsP].
+      unfold required_evidence in EH.
+      destruct evh as [ev_stmt ev_get].
+      simpl in *. subst ev_stmt.
+      destruct ev_get as (wf_lshP & wf_rhsP & thm_holds).
+      eapply saturate_L2R_correct. 1: exact e_pf. exact thm_holds.
+  Qed.
 
 End WithConstmap.
 
@@ -5659,11 +5693,16 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
-    pose (@EGraphList.nil Type) as tm.
-    pose (@EGraphList.nil (dyn tm)) as cm.
+    Mut.make cm (let tm := @EGraphList.nil Type in
+                 @EGraphList.nil (dyn tm)).
+
+    Set Ltac Backtrace.
+
+    (* TODO test new reify_quantified_equality
     Time reify_theorem tm cm new_th A1.
     Time reify_theorem tm cm new_th2 eq_eq_True.
     Time reify_theorem tm cm new_th3 H.
+    *)
   Abort.
 End WithLib.
 

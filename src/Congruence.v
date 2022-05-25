@@ -1896,15 +1896,15 @@ generate_theorem' types_of_varmap varmap
               remember (app_assoc _ _ _ ).
               unfold eq_trans, f_equal.
               change ((fix app (l m : list type) {struct l} : list type :=
-                match l with
-                | [] => m
-                | a0 :: l1 => a0 :: app l1 m
-                end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
+                       match l with
+                       | [] => m
+                       | a0 :: l1 => a0 :: app l1 m
+                       end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
               change ((fix app (l m : list type) {struct l} : list type :=
-                match l with
-                | [] => m
-                | a0 :: l1 => a0 :: app l1 m
-                end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
+                       match l with
+                       | [] => m
+                       | a0 :: l1 => a0 :: app l1 m
+                       end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
               generalize wfL.
               generalize wfH.
               clear.
@@ -1929,15 +1929,15 @@ generate_theorem' types_of_varmap varmap
               remember (app_assoc _ _ _ ).
               unfold eq_trans, f_equal.
               change ((fix app (l m : list type) {struct l} : list type :=
-          match l with
-          | [] => m
-          | a0 :: l1 => a0 :: app l1 m
-          end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
-  change ((fix app (l m : list type) {struct l} : list type :=
-          match l with
-          | [] => m
-          | a0 :: l1 => a0 :: app l1 m
-          end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
+                       match l with
+                       | [] => m
+                       | a0 :: l1 => a0 :: app l1 m
+                       end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
+               change ((fix app (l m : list type) {struct l} : list type :=
+                       match l with
+                       | [] => m
+                       | a0 :: l1 => a0 :: app l1 m
+                       end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
               generalize wfR.
               generalize wfH.
               clear.

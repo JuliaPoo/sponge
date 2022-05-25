@@ -1401,7 +1401,7 @@ list (llist (option eclass_id) types_of_varmap).
     refine(flat_map (fun elret =>  _: list (llist (option eclass_id) types_of_varmap)) list_constraints_after_fn ).
     exact (PTree.tree_fold_preorder (fun acc mid  =>
             PTree.tree_fold_preorder (fun acci '(fnbody, arg) =>
-                    match_pattern_aux' fuel types_of_varmap e arg elret _ p1
+                    match_pattern_aux' fuel types_of_varmap e arg elret _ p2
                     ++ acci
                   ) mid acc
             ) apps_represented_by_root nil).
@@ -6111,51 +6111,15 @@ Section WithLib.
     | Inv : invariant_egraph ?tm ?cm ?eVal |- _ =>
         set (e := eVal) in Inv
     end.
-    unfold apply_commands in e.
-    unfold EGraphList.fold_left in e.
-set (apply_command sponge
-            {|
-              get_command_name := CAddEqu;
-              get_command_arg :=
-                mk_reified_qf_equ
-                  (TApp
-                     (TApp (TConst 2 (`2 ~> `2 ~> `1))
-                        (TApp (TConst 3 (`2 ~> `2))
-                           (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2))
-                              (TConst 6 `2))))
-                     (TApp (TConst 3 (`2 ~> `2))
-                        (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2))
-                           (TConst 5 `2))))
-                  (TApp
-                     (TApp (TConst 2 (`2 ~> `2 ~> `1))
-                        (TApp (TConst 3 (`2 ~> `2))
-                           (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2))
-                              (TConst 6 `2))))
-                     (TApp (TConst 3 (`2 ~> `2))
-                        (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2))
-                           (TConst 5 `2))))
-            |}) as e1.
-move e1 at top.
-simpl in e.
-set (add_equ
-            (TApp
-               (TApp (TConst 2 (`2 ~> `2 ~> `1))
-                  (TApp (TConst 3 (`2 ~> `2))
-                     (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2)) (TConst 6 `2))))
-               (TApp (TConst 3 (`2 ~> `2))
-                  (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2)) (TConst 5 `2))))
-            (TApp
-               (TApp (TConst 2 (`2 ~> `2 ~> `1))
-                  (TApp (TConst 3 (`2 ~> `2))
-                     (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2)) (TConst 6 `2))))
-               (TApp (TConst 3 (`2 ~> `2))
-                  (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2)) (TConst 5 `2))))
-            sponge) as post_add_goal in e. move post_add_goal at top.
-unfold saturate_LtoR in e.
+    let cm := eval unfold cm in cm in 
+    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd b a)) in 
+    pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
+    let cm := eval unfold cm in cm in 
+    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd a b)) in 
+    pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
+    vm_compute in o,o0.
 
-set (match_pattern_any_root FUEL
-            (EGraphList.cons `2 (EGraphList.cons `2 EGraphList.nil)) post_add_goal `2
-            (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TVar 1 `2)) (TVar 2 `2))) as l.
+(* Bug numero 1: la liste va trop long, off by one error, which side is the error on? *)
 
 (* This is the list of results of matching wadd_comm, which should not be empty! *)
 vm_compute in l.

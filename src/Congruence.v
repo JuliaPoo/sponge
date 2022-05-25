@@ -1811,12 +1811,12 @@ generate_theorem' types_of_varmap varmap
           intros.
           set (hlist_snoc varmap x).
           change ((fix map (l : list type) : list Type :=
-         match l with
-         | [] => []
-         | a :: t => t_denote typemap a :: map t
-         end) types_of_varmap) with (map (t_denote typemap) types_of_varmap ) in h.
-         change ([t_denote typemap a]) with (map (t_denote typemap ) [a]) in h.
-         pose (cast_hlist _ _ h).
+          match l with
+          | [] => []
+          | a :: t => t_denote typemap a :: map t
+          end) types_of_varmap) with (map (t_denote typemap) types_of_varmap ) in h.
+          change ([t_denote typemap a]) with (map (t_denote typemap ) [a]) in h.
+          pose (cast_hlist _ _ h).
           specialize (IHtypes_of_varmap_remaining h0).
           subst h0.
           unfold cast_hlist in IHtypes_of_varmap_remaining.
@@ -1827,7 +1827,6 @@ generate_theorem' types_of_varmap varmap
             end.
           {
             subst h.
-
             remember (interp_term _ _ _ _ _ _ ).
             clear.
             change ((fix map (l : list type) : list Type :=
@@ -1894,8 +1893,6 @@ generate_theorem' types_of_varmap varmap
               unfold cast_hlist_assoc.
               unfold eq_ind.
               simpl.
-              (* unfold app_assoc. *)
-              (* unfold list_ind. *)
               remember (app_assoc _ _ _ ).
               unfold eq_trans, f_equal.
               change ((fix app (l m : list type) {struct l} : list type :=
@@ -1953,9 +1950,6 @@ generate_theorem' types_of_varmap varmap
               generalize e.
               dependent destruction e0.
               eauto.
-            }
-            {
-              admit.
             }
           }
           {

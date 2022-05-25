@@ -1738,7 +1738,7 @@ induction t.
   rewrite Heqo.
   eauto.
 }
-Qed.
+Defined.
 Definition cast_hlist {typemap} l r: hlist
      (map (t_denote typemap) l ++ map (t_denote typemap) r) ->
 hlist
@@ -1893,21 +1893,66 @@ generate_theorem' types_of_varmap varmap
               subst savedWfl'.
               unfold cast_hlist_assoc.
               unfold eq_ind.
+              simpl.
+              (* unfold app_assoc. *)
+              (* unfold list_ind. *)
               remember (app_assoc _ _ _ ).
+              unfold eq_trans, f_equal.
+              change ((fix app (l m : list type) {struct l} : list type :=
+                match l with
+                | [] => m
+                | a0 :: l1 => a0 :: app l1 m
+                end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
+              change ((fix app (l m : list type) {struct l} : list type :=
+                match l with
+                | [] => m
+                | a0 :: l1 => a0 :: app l1 m
+                end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
               generalize wfL.
               generalize wfH.
               clear.
               generalize pL.
               clear.
               generalize hole.
-              clear.
-              clear tHole.
-
+              generalize constmap.
+              generalize typemap.
+              generalize t.
               generalize e.
+              dependent destruction e0.
+              eauto.
+            }
+            {
               clear.
-              intro.
-              dependent destruction e.
-              admit.
+              subst wfsubR_transported.
+              subst savedWfR.
+              subst savedWfR'.
+              unfold cast_hlist_assoc.
+              unfold eq_ind.
+              simpl.
+              remember (app_assoc _ _ _ ).
+              unfold eq_trans, f_equal.
+              change ((fix app (l m : list type) {struct l} : list type :=
+          match l with
+          | [] => m
+          | a0 :: l1 => a0 :: app l1 m
+          end)(types_of_varmap ++ [a]) types_of_varmap_remaining)  with ((types_of_varmap ++ [a]) ++ types_of_varmap_remaining).
+  change ((fix app (l m : list type) {struct l} : list type :=
+          match l with
+          | [] => m
+          | a0 :: l1 => a0 :: app l1 m
+          end)(types_of_varmap) (a::types_of_varmap_remaining))  with ((types_of_varmap) ++ ([a] ++ types_of_varmap_remaining)).
+              generalize wfR.
+              generalize wfH.
+              clear.
+              generalize pR.
+              clear.
+              generalize hole.
+              generalize constmap.
+              generalize typemap.
+              generalize t.
+              generalize e.
+              dependent destruction e0.
+              eauto.
             }
             {
               admit.

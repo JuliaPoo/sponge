@@ -1726,13 +1726,25 @@ hlist
      erewrite <- map_app in X.
      exact X.
 Defined.
+
+Definition cast_hlist_assoc {typemap constmap} (l1 l2 l3: list type) {t} (pL : term t) :
+wf_term typemap constmap
+     (l1 ++ l2 ++ l3) pL =
+   true ->
+wf_term typemap constmap
+     ((l1 ++ l2) ++ l3) pL = true
+ .
+     intros.
+     erewrite app_assoc in H.
+     exact H.
+Defined.
+
 Lemma elim_quant_generate_theorem :
 forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
 varmap constmap
 (hole : term tHole) wfH
 (pL pR : term t)
-wfL wfR
-,
+wfL wfR,
   generate_theorem' (tHole::types_of_varmap) (HCons (t_denote typemap tHole) (interp_term typemap constmap [] HNil hole wfH) varmap)
        types_of_varmap_remaining t pL pR wfL wfR =
 generate_theorem' types_of_varmap varmap
@@ -1748,15 +1760,18 @@ generate_theorem' types_of_varmap varmap
       specialize (IHtypes_of_varmap_remaining) with (hole:= hole).
       pose wfL as savedWfL.
       change (a :: types_of_varmap_remaining) with ([a] ++ types_of_varmap_remaining) in savedWfL.
-      rewrite app_assoc in savedWfL.
+      pose (cast_hlist_assoc _ _ _ _  savedWfL).
+      rename savedWfL into savedWfl'.
+      rename e into savedWfL.
       specialize (IHtypes_of_varmap_remaining) with (wfL:= savedWfL).
        pose wfR as savedWfR.
       change (a :: types_of_varmap_remaining) with ([a] ++ types_of_varmap_remaining) in savedWfR.
-      rewrite app_assoc in savedWfR.
+      pose (cast_hlist_assoc _ _ _ _  savedWfR).
+      rename savedWfR into savedWfR'.
+      rename e into savedWfR.
       specialize (IHtypes_of_varmap_remaining) with (wfR:= savedWfR).
       specialize (IHtypes_of_varmap_remaining) with (wfH:= wfH).
       simpl.
-
       Require Import Coq.Logic.FunctionalExtensionality.
       pose @forall_extensionality.
       set (eq_ind _ _ _ _ _ ) as wfL_transported.
@@ -1833,64 +1848,56 @@ generate_theorem' types_of_varmap varmap
             cbn.
             eauto.
         }
+        rewrite <- H .
+        match goal with
+        | [H: generate_theorem' _ _ _ _ _ _ ?l1 ?l2 = _ |- generate_theorem' _ _ _ _ _ _ ?r1 ?r2 = _] =>
+          assert (l1 = r1); [ | assert (l2=r2)]
+          end.
+          3:{ 
+            rewrite <- H0 . rewrite <- H1.
+            rewrite IHtypes_of_varmap_remaining.
+            match goal with
+            | [ |- generate_theorem' _ _ _ _ _ _ ?l1 ?l2 =  generate_theorem' _ _ _ _ _ _ ?r1 ?r2] =>
+            assert (l1 = r1); [ | assert (l2=r2)]
+            end.
+            3:{
+              rewrite H2.
+              rewrite H3.
+              eauto.
+            }
+            {
+              clear.
+              subst wfsubL_transported.
+              subst savedWfL.
+              subst savedWfl'.
+              unfold cast_hlist_assoc.
+              unfold eq_ind.
+              remember (app_assoc _ _ _ ).
+              generalize wfL.
+              generalize wfH.
+              clear.
+              generalize pL.
+              clear.
+              generalize hole.
+              clear.
+              clear tHole.
 
-          rewrite H in IHtypes_of_varmap_remaining.
-          (* rewrite IHtypes_of_varmap_remaining.
-          f_equal.
-          {
-            intros.
-            rewrite H5.
-            rewrite H6.
-            reflexivity.
+              generalize e.
+              clear.
+              intro.
+              dependent destruction e.
+              admit.
+            }
+            {
+              admit.
+            }
           }
           {
-            subst app_p_transported.
-            subst p_transported.
-            unfold app_assoc'.
-            unfold eq_rect, eq_trans, f_equal.
-            remember (list_ind _ _ _ _ ).
-            clear.
-            revert v.
-            revert p.
-            revert rett.
-            revert t0.
-            simpl in y.
-            generalize y.
-            clear y.
-            pose app_assoc'.
-            specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-            simpl in e.
-            rewrite <- e.
-            intros.
-            dependent destruction y.
-            reflexivity.
+            admit.
           }
           {
-            subst app_pnew_transported.
-            subst pnew_transported.
-            unfold app_assoc'.
-            unfold eq_rect, eq_trans, f_equal.
-            remember (list_ind _ _ _ _ ).
-            clear.
-            revert v.
-            revert pnew.
-            revert rett.
-            revert t0.
-            simpl in y.
-            generalize y.
-            clear y.
-            pose app_assoc'.
-
-            specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-            simpl in e.
-            rewrite <- e.
-            intros.
-            dependent destruction y.
-            reflexivity.
-          } *)
-          admit.
-
-
+            admit.
+          }
       }
       specialize (e H).
       simpl in e.

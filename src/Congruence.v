@@ -1953,10 +1953,10 @@ generate_theorem' types_of_varmap varmap
             }
           }
           {
-            admit.
+            eauto.
           }
           {
-            admit.
+            eauto.
           }
       }
       specialize (e H).

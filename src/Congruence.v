@@ -365,8 +365,7 @@ Definition computable_andb_true_iff :=
     conj (fun H : false = true => conj H H)
       (fun H : false = true /\ false = true =>
        and_ind (fun _ H1 : false = true => H1) H)
-    :
-    (false && false)%bool = true <-> false = true /\ false = true.
+    .
 Section weaken_wf_term.
 Context (typemap : list Type) (constmap : list (dyn typemap)) .
 Lemma weaken_varmap_wf_term {t : type} (a : term t)
@@ -1760,6 +1759,52 @@ wf_term typemap constmap
      exact H.
 Defined.
 
+Lemma interp_subst : forall
+      (typemap: list Type)
+      (tHole t: type)
+      (pL: term t)
+      (hole: term tHole)
+      (constmap: list (dyn typemap))
+      (l: list type)
+      (varmap: hlist (map (t_denote typemap) l))
+      (wfH: wf_term typemap constmap [] hole = true)
+      (wfL: wf_term typemap constmap (tHole :: l) pL = true),
+      interp_term typemap constmap (tHole :: l)
+        (HCons (t_denote typemap tHole)
+           (interp_term typemap constmap [] HNil hole wfH) varmap) pL wfL =
+      interp_term typemap constmap l varmap (subst_pattern pL hole)
+        (subst_pattern_preserve_wf t pL tHole hole wfL wfH).
+        Admitted.
+  (* induction pL. 
+  {
+    intros.
+    simpl.
+    simpl in wfL.
+    destruct (computable_andb_true_iff _ _) eqn:?.
+    pose (Bool.andb_true_iff
+                (wf_term typemap constmap (tHole :: l) pL1)
+                (wf_term typemap constmap (tHole :: l) pL2)).
+    destruct i.
+    clear H0.
+    specialize (H wfL).
+    destruct H.
+    remember (  match
+    computable_andb_true_iff
+      (@wf_term typemap constmap (tHole :: l) (t ~> td) pL1)
+      (@wf_term typemap constmap (tHole :: l) t pL2)
+         with
+         | conj H1 _ => H1
+         end wfL).
+    unfold computable_andb_true_iff in Heqa.
+    rewrite H0 in Heqa.
+    dependent destruction (wf_term typemap constmap (tHole :: l) pL2) in Heqa.
+         simpl in Heqa.
+    rewrite H in a.
+    rewrite  in wfL.
+
+  } *)
+  
+
 Lemma elim_quant_generate_theorem :
 forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
 varmap constmap
@@ -1964,112 +2009,139 @@ generate_theorem' types_of_varmap varmap
       eapply e.
     }
     {
-      admit.
-      (* intros.
-      cbn [generate_theorem].
-      erewrite <- elim_quant_interp_pattern.
-      erewrite <- elim_quant_interp_pattern.
+      intros.
+      cbn [generate_theorem'].
+      simpl.
+      unfold eq_ind, eq_trans, f_equal.
+      remember (app_nil_r types_of_varmap).
+      clear Heqe.
+      change ((fix app (l m : list type) {struct l} : list type :=
+             match l with
+             | [] => m
+             | a :: l1 => a :: app l1 m
+             end) types_of_varmap []) with (types_of_varmap ++ []).
+      change (((fix map (l : list type) : list Type :=
+          match l with
+          | [] => []
+          | a :: t0 => t_denote typemap a :: map t0
+          end) types_of_varmap)) with (map (t_denote typemap) types_of_varmap) in *.
+
       eapply eqPropType.
       Require Import Coq.Logic.PropExtensionality.
       pose propositional_extensionality.
       match goal with
       | [ |- ?a = ?b] => set a; set b end.
-      specialize (e P P0).
+      specialize (e0 P P0).
       (* Upcaster from P = P0 in Prop, to P = P0 in type*)
-      eapply e.
+      eapply e0.
       subst P P0.
-      clear e.
+      clear e0.
       split.
       {
         intros.
         (* This was surprisingly tricky the first time *)
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
-        clear H.
+        match goal with 
+        | [ |- ?a = ?b] =>
+          match type of H with 
+          | ?c = ?d => 
+          assert (a = c); [|assert (b = d)]
+          end
+        end.
         {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          clear Heqy.
-          clear y.
-          rewrite app_nil_r'.
+          clear. 
+          generalize wfH, wfL.
+          generalize varmap. 
+          clear.
+          generalize constmap. 
+          clear.
+          intro.
+          dependent destruction e.
+          clear.
           intros.
-          dependent destruction y.
-          reflexivity.
+          simpl in wfL.
+          remember (types_of_varmap ++ []).
+          clear Heql.
+          clear.
+          erewrite interp_subst.
+          eauto.
         }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
         {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          rewrite app_nil_r'.
+          clear. 
+          generalize wfH, wfR.
+          generalize varmap. 
+          clear.
+          generalize constmap. 
+          clear.
+          intro.
+          dependent destruction e.
+          clear.
           intros.
-          dependent destruction y0.
-          reflexivity.
+          simpl in wfR.
+          remember (types_of_varmap ++ []).
+          clear Heql.
+          clear.
+          erewrite interp_subst.
+          eauto.
         }
-        etransitivity .
-        exact H0.
-        etransitivity .
-        exact H.
+       
+        rewrite H0.
+        rewrite H1.
         eauto.
       }
       {
         intros.
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) p
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) p) .
-        clear H.
+        (* This was surprisingly tricky the first time *)
+        match goal with 
+        | [ |- ?a = ?b] =>
+          match type of H with 
+          | ?c = ?d => 
+          assert (a = c); [|assert (b = d)]
+          end
+        end.
         {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          clear Heqy.
-          clear y.
-          rewrite app_nil_r'.
+          clear. 
+          generalize wfH, wfL.
+          generalize varmap. 
+          clear.
+          generalize constmap. 
+          clear.
+          intro.
+          dependent destruction e.
+          clear.
           intros.
-          dependent destruction y.
-          reflexivity.
+          simpl in wfL.
+
+          remember (types_of_varmap ++ []).
+          clear Heql.
+          clear.
+          erewrite interp_subst. 
+          eauto.
         }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' deep_type t_quantifiermap))) pnew
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' deep_type (t0 :: t_quantifiermap))) pnew).
         {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          rewrite app_nil_r'.
+          clear. 
+          generalize wfH, wfR.
+          generalize varmap. 
+          clear.
+          generalize constmap. 
+          clear.
+          intro.
+          dependent destruction e.
+          clear.
           intros.
-          dependent destruction y0.
-          reflexivity.
+          simpl in wfR.
+          remember (types_of_varmap ++ []).
+          clear Heql.
+          clear.
+          erewrite interp_subst.
+          eauto.
         }
-        etransitivity.
-        symmetry;
-        exact H0.
-        etransitivity.
-        exact H.
+       
+        rewrite H0.
+        rewrite H1.
         eauto.
-      } *)
+      }
     }
-    Admitted.
+    Qed.
 
 Lemma lookup_closed_term_varmap : forall {types_of_varmap typemap constmap} {tw}
    (w : term tw) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap),

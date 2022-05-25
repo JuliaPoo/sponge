@@ -1164,18 +1164,29 @@ Inductive reified_qf_equ :=
 
 Inductive command_name :=
 | CSaturateL2R
-| CAddEqu.
+| CAddEqu
+| CAddTerm.
 (* later:
 | CSaturateR2L
 | CSaturateNoNewTerms
 | CComputeGroundTerms
 ...
+
+Possible notation: 3 chars:
+- Match (?) or Create (!) LHS
+- Treat LHS first (>) or Treat RHS first (<)
+- Match (?) or Create (!) RHS
+
+Eg CSaturateL2R would be ?>! : match LHS, then create all resulting RHS terms
+Here, direction is actually implied.
+But in ?>? vs ?<?, we might want to specify the "query plan" of where to match first.
 *)
 
 Definition command_arg (c : command_name) : Type :=
   match c with
   | CSaturateL2R => reified_q_equ
   | CAddEqu => reified_qf_equ
+  | CAddTerm => { tp : type & term tp }
   end.
 
 Record command := mk_command {
@@ -5515,6 +5526,12 @@ Ltac beta1 func arg :=
   | (fun a => ?f) => constr:(subst! arg for a in f)
   end.
 
+Ltac toplevel_betas t :=
+  match t with
+  | ?f ?a => let f' := toplevel_betas f in beta1 f' a
+  | _ => t
+  end.
+
 Goal True.
   (* We can swap rhs while body keeps referring to y: *)
   lazymatch constr:(let x := 1 in x + x) with
@@ -5575,6 +5592,15 @@ Ltac reify_qf_equ t :=
   | @mk_reified_q_equ nil ?t ?l ?r => constr:(@mk_reified_qf_equ t l r)
   end.
 
+(* give tactics-in-terms notations access to goal *)
+Definition conjecture(P: Prop) := True.
+
+(* hack to get goal reified *)
+Ltac pose_goal_as_hyp :=
+  lazymatch goal with
+  | |- ?g => assert (g = g) by reflexivity
+  end.
+
 (* Identify function to annotate hypotheses and the goal with their reification.
    R will be reified_q_equ or reified_qf_equ or term *)
 Definition reified(P: Prop){R: Type}{r: R} := P.
@@ -5586,6 +5612,7 @@ Ltac reify_hyp H :=
   | forall _, _ =>
       let r := reify_q_equ t in
       change (@reified t reified_q_equ r) in H
+(*| conjecture ?P => maybe *)
   | _ = _ =>
       let r := reify_qf_equ t in
       change (@reified t reified_qf_equ r) in H
@@ -5617,6 +5644,7 @@ Ltac reify_goal :=
   end.
 
 Ltac reify_all :=
+  pose_goal_as_hyp;
   constmap_ref_init;
   reify_hyps;
   reify_goal.
@@ -5625,16 +5653,11 @@ Definition apply_command (e : egraph) (c : command) : egraph :=
   match c with
   | mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) => saturate_LtoR tvm lhsP rhsP e
   | mk_command CAddEqu (mk_reified_qf_equ lhs rhs) => add_equ lhs rhs e
+  | mk_command CAddTerm (existT _ tp t) => fst (@add_term [] HNil e tp t)
   end.
 
 Definition apply_commands : list command -> egraph -> egraph :=
   fold_left apply_command.
-
-(* a dynamically typed proof *)
-Record dyn_proof := mk_dyn_hyp {
-  dyn_proof_stmt : Type;
-  dyn_proof_get : dyn_proof_stmt
-}.
 
 (* Note: DON'T do this:
 
@@ -5651,86 +5674,173 @@ procedure (and thus to vm_compute), and one for the data to be fed to conversion
 (ie the checks that reification was done correctly).
 *)
 
-Ltac dyn_proof_to_command p :=
-  lazymatch p with
-  | mk_dyn_hyp (@reified ?P ?R ?reif) ?hypname =>
-      (* Currently, we can infer to command from the type of reif, but later,
-         the argument passed to this ltac will also have to specify the command *)
-      let cmdName := lazymatch R with
-                     | reified_q_equ => constr:(CSaturateL2R)
-                     | reified_qf_equ => constr:(CAddEqu)
-                     end in
-      constr:(mk_command cmdName reif)
+Section WithConstmap.
+  Context {typemap : list Type}.
+  Context (constmap: list (dyn typemap)).
+
+  (* TODO maybe wf_term should only take the deep types of the constmap but not
+     the values so that we can vm_compute it *)
+
+  Inductive justified_command: Type :=
+  | mk_justified_SaturateL2R (tvm: list type) {t: type} (lhsP rhsP : term t)
+      (wf_lhsP : wf_term typemap constmap tvm lhsP = true)
+      (wf_rhsP : wf_term typemap constmap tvm rhsP = true)
+      (pf: generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP)
+  | mk_justified_AddEqu {t: type} (lhsP rhsP : term t)
+      (wf_lhsP : wf_term typemap constmap [] lhsP = true)
+      (wf_rhsP : wf_term typemap constmap [] rhsP = true)
+      (pf: generate_theorem [] lhsP rhsP wf_lhsP wf_rhsP)
+  | mk_justified_AddTerm {tp : type} (t : term tp)
+      (wf : wf_term typemap constmap [] t = true).
+
+  Definition erase_justification (jc : justified_command) : command :=
+    match jc with
+    | mk_justified_SaturateL2R tvm lhsP rhsP wf_lhsP wf_rhsP pf =>
+        mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP)
+    | mk_justified_AddEqu lhsP rhsP wf_lhsP wf_rhsP pf =>
+        mk_command CAddEqu (mk_reified_qf_equ lhsP rhsP)
+    | @mk_justified_AddTerm tp t wf =>
+        mk_command CAddTerm (existT term tp t)
+    end.
+
+  Unset Printing Records.
+
+  Lemma apply_commands_correct: forall (cs : list command) (jcs : list justified_command)
+        (e : egraph)
+        (EVM : cs = map erase_justification jcs)
+        (e_pf : invariant_egraph typemap constmap e),
+    invariant_egraph typemap constmap (apply_commands cs e).
+  Proof.
+    induction cs; intros. 1: exact e_pf.
+    destruct jcs as [|evh evt]. 1: discriminate EVM.
+    simpl in EVM.
+    injection EVM. clear EVM. intros ET EH. subst.
+    eapply IHcs. 1: reflexivity.
+    destruct evh; simpl in *.
+    - (* CSaturateL2R *)
+      eapply saturate_L2R_correct. 1: exact e_pf. exact pf.
+    - (* CAddEqu *)
+      eapply merge_preserve in e_pf. 2: exact pf.
+      unfold merge_terms, add_equ in *.
+      destruct add_term. destruct add_term. exact e_pf.
+    - (* CAddTerm *)
+      eapply add_term_safe with (f := t) in e_pf.
+      destruct add_term. simpl.
+      eapply e_pf.
+  Qed.
+
+End WithConstmap.
+
+Ltac ltac_erase_justification jc :=
+  lazymatch jc with
+  | mk_justified_SaturateL2R _ ?tvm ?lhsP ?rhsP _ _ _  =>
+      constr:(mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP))
+  | mk_justified_AddEqu _ ?lhs ?rhs _ _ _ =>
+      constr:(mk_command CAddEqu (mk_reified_qf_equ lhs rhs))
+  | @mk_justified_AddTerm ?tp ?t ?wf =>
+      constr:(mk_command CAddTerm (existT term tp t))
   end.
 
-Ltac dyn_proofs_to_commands pfs := ltac_map ltac:(dyn_proof_to_command) pfs.
+Ltac hyp_to_justified_command cm H :=
+  lazymatch type of H with
+  | @reified ?P ?R ?reif =>
+      (* Currently, we can infer to command from the type of reif, but later,
+         the argument passed to this ltac will also have to specify the command *)
+      lazymatch reif with
+      | mk_reified_q_equ ?tvm ?lhsP ?rhsP =>
+          constr:(mk_justified_SaturateL2R cm tvm lhsP rhsP eq_refl eq_refl H)
+      | mk_reified_qf_equ ?lhs ?rhs =>
+          constr:(mk_justified_AddEqu cm lhs rhs eq_refl eq_refl H)
+      end
+  end.
+
+Ltac ident2jc H :=
+  lazymatch goal with
+  | cm := _ : list (dyn _) |- _ =>
+    let r := hyp_to_justified_command cm H in exact r
+  end.
+
+(* doesn't work because no access to goal
+Ltac goalLHS2jc :=
+  lazymatch goal with
+  | cm := _ : EGraphList.list (dyn ?tm) |- @reified ?P ?R (mk_reified_qf_equ ?lhs ?rhs) =>
+    exact (@mk_justified_AddTerm tm cm _ lhs eq_refl)
+  end.
+
+Ltac goalRHS2jc :=
+  lazymatch goal with
+  | cm := _ : EGraphList.list (dyn ?tm) |- @reified ?P ?R (mk_reified_qf_equ ?lhs ?rhs) =>
+    exact (@mk_justified_AddTerm tm cm _ rhs eq_refl)
+  end.
+*)
+
+Ltac erase_justifications := ltac_map ltac:(ltac_erase_justification).
+
+(* expects a goal of the form
+   reified _ -> reified _ -> ... -> _
+   and intros all the reified's and returns a list of these reified's
+   converted to justified commands *)
+Ltac intros_reified cm acc :=
+  lazymatch goal with
+  | |- forall (name: @reified ?P ?R ?r), _ =>
+      let __ := match constr:(O) with _ => intro name end in
+      let jc := hyp_to_justified_command cm name in
+      intros_reified cm (EGraphList.cons jc acc)
+  | |- _ => constr:(acc)
+  end.
+
+Ltac collect_qf_equs :=
+  let r := lazymatch goal with
+  | cm := _ : EGraphList.list (dyn _) |- _ =>
+      let __ := match constr:(O) with _ =>
+        repeat match goal with
+               | H: @reified _ reified_qf_equ _ |- _ => revert H
+               end
+      end in
+      intros_reified cm (@EGraphList.nil (justified_command cm))
+  end in toplevel_betas r.
+
+Ltac collect_q_equs :=
+  let r := lazymatch goal with
+  | cm := _ : EGraphList.list (dyn _) |- _ =>
+      let __ := match constr:(O) with _ =>
+        repeat match goal with
+               | H: @reified _ reified_q_equ _ |- _ => revert H
+               end
+      end in
+      intros_reified cm (@EGraphList.nil (justified_command cm))
+  end in toplevel_betas r.
+
+Ltac ltac_app xs ys :=
+  lazymatch xs with
+  | ?h :: ?t => refine (cons h _); ltac_app t ys
+  | nil => exact ys
+  end.
 
 (* TODO use Seq command combinator instead of (@cons command), which will allow us
-   to get rid of `nop` at the end of sequences *)
+   to get rid of ltac_app computations *)
+
 Declare Custom Entry sponge_command.
 Declare Scope sponge_scope.
 Local Open Scope sponge_scope.
 
 Notation "{{ x }}" := x (x custom sponge_command at level 10) : sponge_scope.
-Notation "a ; b" := (@cons dyn_proof a b)
-  (in custom sponge_command at level 5, right associativity,
-   b custom sponge_command at level 5).
-Notation "'nop'" := (@nil dyn_proof)
-  (in custom sponge_command at level 5).
-Notation "H" := (mk_dyn_hyp _ H)
-  (in custom sponge_command at level 0, H ident).
-
-Section WithConstmap.
-  Context {typemap : list Type}.
-  Context (constmap: list (dyn typemap)).
-
-  Definition required_evidence(c: command): Type :=
-    match c with
-    | mk_command CSaturateL2R (mk_reified_q_equ tvm lhsP rhsP) =>
-        { wf_lhsP : wf_term typemap constmap tvm lhsP = true &
-          { wf_rhsP : wf_term typemap constmap tvm rhsP = true &
-             generate_theorem tvm lhsP rhsP wf_lhsP wf_rhsP } }
-    | mk_command CAddEqu (mk_reified_qf_equ lhs rhs) =>
-        { wf_lhs : wf_term typemap constmap [] lhs = true &
-          { wf_rhs : wf_term typemap constmap [] rhs = true &
-             generate_theorem [] lhs rhs wf_lhs wf_rhs } }
-    end.
-
-  Definition evidence_matches (ev : list dyn_proof) (cs : list command) : Type :=
-    map dyn_proof_stmt ev = map required_evidence cs.
-
-  Lemma apply_commands_correct: forall (cs : list command) (ev : list dyn_proof)
-        (e : egraph)
-        (EVM : evidence_matches ev cs)
-        (e_pf : invariant_egraph typemap constmap e),
-    invariant_egraph typemap constmap (apply_commands cs e).
-  Proof.
-    induction cs; intros. 1: exact e_pf.
-    unfold evidence_matches in EVM.
-    destruct ev as [|evh evt]. 1: discriminate EVM.
-    simpl in EVM.
-    injection EVM. clear EVM. intros ET EH.
-    eapply IHcs. 1: exact ET.
-    unfold required_evidence in EH.
-    destruct a as [name thm].
-    destruct name.
-    - (* CSaturateL2R *)
-      destruct thm as [tvm t lhsP rhsP].
-      destruct evh as [ev_stmt ev_get].
-      simpl in *. subst ev_stmt.
-      destruct ev_get as (wf_lshP & wf_rhsP & thm_holds).
-      eapply saturate_L2R_correct. 1: exact e_pf. exact thm_holds.
-    - (* CAddEqu *)
-      destruct thm as [lhs rhs].
-      destruct evh as [ev_stmt ev_get].
-      simpl in *. subst ev_stmt.
-      destruct ev_get as (wf_lsh & wf_rhs & thm_holds).
-      eapply merge_preserve in e_pf. 2: exact thm_holds.
-      unfold merge_terms, add_equ in *.
-      destruct add_term. destruct add_term. exact e_pf.
-  Qed.
-
-End WithConstmap.
+Notation "H" := (cons (ltac:(ident2jc H)) (@nil (justified_command _)))
+  (in custom sponge_command at level 0, H ident, only parsing).
+(* don't work because tactics in terms don't have access to goal
+Notation "'goalLHS'" := (cons (ltac:(goalLHS2jc)) (@nil (justified_command _)))
+  (in custom sponge_command at level 0, only parsing).
+Notation "'goalRHS'" := (cons (ltac:(goalRHS2jc)) (@nil (justified_command _)))
+  (in custom sponge_command at level 0, only parsing).
+*)
+(*
+Notation "'allQfEqs'" := (ltac:(let r := collect_qf_equs in exact r))
+  (in custom sponge_command at level 0, only parsing).
+Notation "'allForallEqs'" := (ltac:(let r := collect_q_equs in exact r))
+  (in custom sponge_command at level 0, only parsing).
+*)
+Notation "xs ; ys" := (ltac:(ltac_app xs ys))
+  (in custom sponge_command at level 7, left associativity, only parsing).
 
 End Temp.
 
@@ -5806,8 +5916,10 @@ Section WithLib.
              (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
              ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
               [w1] ++ List.skipn 2 vs))) R m),
+(*
       f (wadd b a) = g b /\
       sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
+*)
       f (wadd b a) = f (wadd a b).
   Proof.
     intros.
@@ -5846,9 +5958,6 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
-    (*
-    *)
-
     reify_all.
 
     lazymatch goal with
@@ -5861,20 +5970,77 @@ Section WithLib.
     pose empty_egraph as sponge.
     assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
 
-
-    let pfs := constr:({{C1; A1; firstn_O; firstn_cons; nop}}) in
-    let cmds := dyn_proofs_to_commands pfs in
+(*
+    let pfs := constr:({{ H0; C1; A1; H;
+    eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O; app_cons; skipn_cons; firstn_cons; sep_comm; wadd_opp; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l }}) in
+    let cmds := erase_justifications pfs in
     lazymatch goal with
     | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
-        eapply (@apply_commands_correct tm cm cmds pfs e) in Inv
+        eapply (@apply_commands_correct tm cm cmds pfs e
+                  eq_refl(*<- needs to be conversion, not vm_compute *)) in Inv
     end.
-
-(* TODO:
-references to lemmas need to put required_evidence into the dyn,
-not just they hyp itself
 *)
 
-    Fail 2: reflexivity.
+    let pfs := constr:({{ H0 ; wadd_comm }}) in
+    let cmds := erase_justifications pfs in
+    lazymatch goal with
+    | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
+        eapply (@apply_commands_correct tm cm cmds pfs e
+                  eq_refl(*<- needs to be conversion, not vm_compute *)) in Inv
+    end.
+
+    lazymatch goal with
+    | Inv : invariant_egraph ?tm ?cm ?eVal |- _ =>
+        set (e := eVal) in Inv
+    end.
+    unfold apply_commands in e.
+    unfold EGraphList.fold_left in e.
+set (apply_command sponge
+            {|
+              get_command_name := CAddEqu;
+              get_command_arg :=
+                mk_reified_qf_equ
+                  (TApp
+                     (TApp (TConst 2 (`2 ~> `2 ~> `1))
+                        (TApp (TConst 3 (`2 ~> `2))
+                           (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2))
+                              (TConst 6 `2))))
+                     (TApp (TConst 3 (`2 ~> `2))
+                        (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2))
+                           (TConst 5 `2))))
+                  (TApp
+                     (TApp (TConst 2 (`2 ~> `2 ~> `1))
+                        (TApp (TConst 3 (`2 ~> `2))
+                           (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2))
+                              (TConst 6 `2))))
+                     (TApp (TConst 3 (`2 ~> `2))
+                        (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2))
+                           (TConst 5 `2))))
+            |}) as e1.
+move e1 at top.
+simpl in e.
+set (add_equ
+            (TApp
+               (TApp (TConst 2 (`2 ~> `2 ~> `1))
+                  (TApp (TConst 3 (`2 ~> `2))
+                     (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2)) (TConst 6 `2))))
+               (TApp (TConst 3 (`2 ~> `2))
+                  (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2)) (TConst 5 `2))))
+            (TApp
+               (TApp (TConst 2 (`2 ~> `2 ~> `1))
+                  (TApp (TConst 3 (`2 ~> `2))
+                     (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 5 `2)) (TConst 6 `2))))
+               (TApp (TConst 3 (`2 ~> `2))
+                  (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TConst 6 `2)) (TConst 5 `2))))
+            sponge) as post_add_goal in e. move post_add_goal at top.
+unfold saturate_LtoR in e.
+
+set (match_pattern_any_root FUEL
+            (EGraphList.cons `2 (EGraphList.cons `2 EGraphList.nil)) post_add_goal `2
+            (TApp (TApp (TConst 4 (`2 ~> `2 ~> `2)) (TVar 1 `2)) (TVar 2 `2))) as l.
+
+(* This is the list of results of matching wadd_comm, which should not be empty! *)
+vm_compute in l.
 
     (* to see what's hidden:
     Arguments reified : clear implicits.

@@ -791,7 +791,7 @@ Section egraphs.
     end.
 
   Definition merge_n2id (e1 e2 : eclass_id) (m : map_enode_to_eid ) : map_enode_to_eid :=
-    let '(atms, fs) := m in
+    let '(atms, apps) := m in
     (* EApp e1 e3 -> e143
     Add
        EApp e2 e3 -> e143
@@ -805,11 +805,11 @@ Section egraphs.
                                       let one_e1 := orb (Pos.eqb a e1) (Pos.eqb b e1) in
                                       if one_e1 then
                                       let newa := if Pos.eqb a e1 then e2 else a in
-                                      let newb := if Pos.eqb b e1 then e2 else a in
-                                      (EApp newa newb, eid)::acc
-                                      else acc
-                                    | _ => acc
-                                    end) val acc) fs nil in
+                                      let newb := if Pos.eqb b e1 then e2 else b in
+                                      (EApp newa newb, eid)::acci
+                                      else acci
+                                    | _ => acci
+                                    end) val acc) apps nil in
     EGraphList.fold_left (fun acc '(enode,eid) =>
     add_enode acc enode eid
     ) eapp_gather_to_change m
@@ -833,6 +833,7 @@ Section egraphs.
     Context {types_of_varmap : list type}
             (var_instantiations : llist eclass_id types_of_varmap).
 
+    (* Always returns a canonical eid *)
     Fixpoint lookup_term {t} (f : term t) (e : egraph) : option (eclass_id) :=
       match f with
       | TApp e1 e2 =>
@@ -843,9 +844,16 @@ Section egraphs.
           | _, _ => None
           end
       | TConst n _t => lookup e (EConst n)
-      | TVar n _t => llist_nth_error var_instantiations n
+      | TVar n _t =>
+          match llist_nth_error var_instantiations n with
+          | Some to_canon => Some (find (uf e) to_canon)
+          | None => None
+          end
       end.
 
+    (* Always returns a canonical eid (which allows the implementation of
+       merge to be simpler because it doesn't have to canonicalize the
+       results of add_term) *)
     Fixpoint add_term (e : egraph) {t} (f : term t) : (egraph * eclass_id).
       refine (
       match f with
@@ -880,8 +888,9 @@ Section egraphs.
         end
       end).
       exact (match llist_nth_error var_instantiations n with
-              (* Invariant it is always the case that the varmap contaisn eclass_id that were already in the egraph *)
-             | Some id => (e, id)
+              (* Invariant: it is always the case that the varmap contains eclass_ids that
+                 were already in the egraph, BUT they might not be canonical *)
+             | Some id => (e, find (uf e) id)
              | None => (e, 1) (* ruled out by wf_term *)
              end).
     Defined.
@@ -1644,7 +1653,8 @@ Proof.
   }
   {
     intros; simpl in *.
-    rewrite H.
+    destruct llist_nth_error. 2: discriminate.
+    inversion H.
     reflexivity.
   }
   {
@@ -1775,7 +1785,7 @@ Lemma interp_subst : forall
       interp_term typemap constmap l varmap (subst_pattern pL hole)
         (subst_pattern_preserve_wf t pL tHole hole wfL wfH).
         Admitted.
-  (* induction pL. 
+  (* induction pL.
   {
     intros.
     simpl.
@@ -1803,7 +1813,7 @@ Lemma interp_subst : forall
     rewrite  in wfL.
 
   } *)
-  
+
 
 Lemma elim_quant_generate_theorem :
 forall {types_of_varmap_remaining typemap types_of_varmap tHole t}
@@ -1918,7 +1928,7 @@ generate_theorem' types_of_varmap varmap
         | [H: generate_theorem' _ _ _ _ _ _ ?l1 ?l2 = _ |- generate_theorem' _ _ _ _ _ _ ?r1 ?r2 = _] =>
           assert (l1 = r1); [ | assert (l2=r2)]
           end.
-          3:{ 
+          3:{
             rewrite <- H0 . rewrite <- H1.
             rewrite IHtypes_of_varmap_remaining.
             match goal with
@@ -2040,19 +2050,19 @@ generate_theorem' types_of_varmap varmap
       {
         intros.
         (* This was surprisingly tricky the first time *)
-        match goal with 
+        match goal with
         | [ |- ?a = ?b] =>
-          match type of H with 
-          | ?c = ?d => 
+          match type of H with
+          | ?c = ?d =>
           assert (a = c); [|assert (b = d)]
           end
         end.
         {
-          clear. 
-          generalize wfH, wfL.
-          generalize varmap. 
           clear.
-          generalize constmap. 
+          generalize wfH, wfL.
+          generalize varmap.
+          clear.
+          generalize constmap.
           clear.
           intro.
           dependent destruction e.
@@ -2066,11 +2076,11 @@ generate_theorem' types_of_varmap varmap
           eauto.
         }
         {
-          clear. 
-          generalize wfH, wfR.
-          generalize varmap. 
           clear.
-          generalize constmap. 
+          generalize wfH, wfR.
+          generalize varmap.
+          clear.
+          generalize constmap.
           clear.
           intro.
           dependent destruction e.
@@ -2083,7 +2093,7 @@ generate_theorem' types_of_varmap varmap
           erewrite interp_subst.
           eauto.
         }
-       
+
         rewrite H0.
         rewrite H1.
         eauto.
@@ -2091,19 +2101,19 @@ generate_theorem' types_of_varmap varmap
       {
         intros.
         (* This was surprisingly tricky the first time *)
-        match goal with 
+        match goal with
         | [ |- ?a = ?b] =>
-          match type of H with 
-          | ?c = ?d => 
+          match type of H with
+          | ?c = ?d =>
           assert (a = c); [|assert (b = d)]
           end
         end.
         {
-          clear. 
-          generalize wfH, wfL.
-          generalize varmap. 
           clear.
-          generalize constmap. 
+          generalize wfH, wfL.
+          generalize varmap.
+          clear.
+          generalize constmap.
           clear.
           intro.
           dependent destruction e.
@@ -2114,15 +2124,15 @@ generate_theorem' types_of_varmap varmap
           remember (types_of_varmap ++ []).
           clear Heql.
           clear.
-          erewrite interp_subst. 
+          erewrite interp_subst.
           eauto.
         }
         {
-          clear. 
-          generalize wfH, wfR.
-          generalize varmap. 
           clear.
-          generalize constmap. 
+          generalize wfH, wfR.
+          generalize varmap.
+          clear.
+          generalize constmap.
           clear.
           intro.
           dependent destruction e.
@@ -2135,7 +2145,7 @@ generate_theorem' types_of_varmap varmap
           erewrite interp_subst.
           eauto.
         }
-       
+
         rewrite H0.
         rewrite H1.
         eauto.
@@ -2171,6 +2181,41 @@ wf_term typemap constmap [] w = true ->
       eauto.
     }
     Qed.
+
+Theorem lookup_term_canonical e :
+(*  invariant_egraph e -> *)
+  forall {t} (f : term t) (c : eclass_id),
+    @lookup_term [] HNil _ f e = Some c ->
+    classIsCanonical e c.
+Proof.
+   intro.
+(*
+   induction f.
+  -
+    intros; cbn in H0.
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    destruct (lookupF _ _) eqn:? in H0.
+    2:{ inversion H0. }
+    repeat auto_specialize.
+    destruct H.
+    unfold n2idCanonical in sanely_assigned_lookup0.
+    cleanup'.
+    repeat auto_specialize.
+    eauto.
+  -
+    intros.
+    cbn in H0.
+    unfold lookup in H0.
+    cbn in H0.
+    destruct H.
+    unfold n2idCanonical in sanely_assigned_lookup0.
+    cleanup'.
+    eapply sanely_assigned_lookup0 with (f:=EAtom1 n).
+    eauto.
+  Qed.
+*)
+Admitted.
 
 Lemma lookup_subst : forall {types_of_varmap typemap constmap} tl (pL : term tl) e (v : eclass_id) (varmap : llist eclass_id types_of_varmap)
 rootL  {tw} (w : term tw) ,
@@ -2222,6 +2267,11 @@ wf_term typemap constmap [] w = true ->
         inversion H1.
         subst.
         eapply lookup_closed_term_varmap; eauto.
+        pose proof H2 as C.
+        eapply lookup_term_canonical in C.
+        unfold classIsCanonical in C.
+        rewrite C.
+        exact H2.
       -
         replace ((Pos.to_nat n - 1)%nat) with (S (Pos.to_nat (n - 1) - 1)) in H.
         2:{ destruct n; intuition lia. }
@@ -5715,8 +5765,9 @@ Definition conjecture(P: Prop) := True.
 
 (* hack to get goal reified *)
 Ltac pose_goal_as_hyp :=
+  let name := fresh "get_goal_reified_hack" in
   lazymatch goal with
-  | |- ?g => assert (g = g) by reflexivity
+  | |- ?g => assert (g = g) as name by reflexivity
   end.
 
 (* Identify function to annotate hypotheses and the goal with their reification.
@@ -5960,6 +6011,54 @@ Notation "'allForallEqs'" := (ltac:(let r := collect_q_equs in exact r))
 Notation "xs ; ys" := (ltac:(ltac_app xs ys))
   (in custom sponge_command at level 7, left associativity, only parsing).
 
+Ltac unpack_tm_cm :=
+  lazymatch goal with
+  | cm: @constmap_ref (let tmName := ?tm in let cmName := @?constmapFun tmName in tt)
+    |- _ => pose tm as tmName;
+            let cm' := beta1 constmapFun tmName in
+            pose cm' as cmName;
+            clear cm
+  end.
+
+Ltac saturate_with pfs :=
+  let cmds := erase_justifications pfs in
+  lazymatch goal with
+  | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
+      eapply (@apply_commands_correct tm cm cmds pfs e
+                eq_refl(*<- needs to be conversion, not vm_compute *)) in Inv
+  end.
+
+Ltac prove_eq_by_sponge :=
+  let FL := fresh "FL" in let FR := fresh "FR" in
+  lazymatch goal with
+  | SpongeInv : invariant_egraph ?tm ?cm ?e
+    |- @reified ?P _ (@mk_reified_qf_equ ?tR ?lhsR ?rhsR) =>
+      change P;
+      eassert (@lookup_term (@EGraphList.nil type) HNil _ lhsR e = Some _) as FL
+        by (vm_compute; reflexivity);
+      lazymatch type of FL with
+      | _ = Some ?commonId =>
+          eassert (@lookup_term (@EGraphList.nil type) HNil _ rhsR e = Some _) as FR
+            by (vm_compute; reflexivity);
+          exact (correct SpongeInv tR lhsR rhsR commonId eq_refl eq_refl FL FR)
+      end
+  end.
+
+Lemma modest_test1: forall (word : Type)
+  (wadd : word -> word -> word)
+  (wadd_comm : forall a b : word, wadd a b = wadd b a)
+  (f : word -> word) (a b : word),
+  f (wadd b a) = f (wadd a b).
+Proof.
+  intros.
+  reify_all.
+  unpack_tm_cm.
+  pose empty_egraph as sponge.
+  assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
+  saturate_with {{ get_goal_reified_hack ; wadd_comm }}.
+  prove_eq_by_sponge.
+Time Qed. (* 0.055 secs *)
+
 End Temp.
 
 Local Open Scope sponge_scope.
@@ -6033,12 +6132,10 @@ Section WithLib.
            List.skipn
              (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
              ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs))) R m),
-(*
-      f (wadd b a) = g b /\
-      sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m = True /\
-*)
-      f (wadd b a) = f (wadd a b).
+                [w1] ++ List.skipn 2 vs))) R m),
+        f (wadd b a) = g b /\
+        sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m /\
+        f (wadd b a) = f (wadd a b).
   Proof.
     intros.
 
@@ -6076,6 +6173,62 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
+    pose
+      ( (f (wadd b a) = g b /\
+         sep R (word_array a [v0; w1; w2]) m /\
+         f (wadd b a) = f (wadd a b))
+      = (f (wadd a b) = g b) ) as test1.
+
+    assert test1 as test1pf. {
+      subst test1.
+      rewrite (wadd_comm a (ZToWord 8)) in H.
+      rewrite <- (wadd_assoc (ZToWord 8) a (wopp a)) in H.
+      rewrite (wadd_opp a) in H.
+      rewrite (wadd_0_r (ZToWord 8)) in H.
+      rewrite A1 in H.
+      rewrite C1 in H.
+      repeat (rewrite ?firstn_cons, ?skipn_cons, <-?app_cons, ?firstn_O, ?skipn_O,
+               ?app_nil_l, ?app_nil_r in H).
+      rewrite sep_comm in H.
+      rewrite H.
+      rewrite and_True_l.
+      rewrite (wadd_comm b a).
+      rewrite eq_eq_True.
+      rewrite and_True_r.
+      reflexivity.
+    }
+    clear test1pf.
+
+    assert test1 as test1pf. {
+      subst test1.
+
+      reify_all.
+      unpack_tm_cm.
+      pose empty_egraph as sponge.
+      assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
+      saturate_with {{ get_goal_reified_hack;
+               C1; A1; H;
+        eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
+   app_cons; skipn_cons; firstn_cons (*; sep_comm *); wadd_opp; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l }}.
+
+  lazymatch goal with
+  | SpongeInv : invariant_egraph ?tm ?cm ?e
+    |- @reified ?P _ (@mk_reified_qf_equ ?tR ?lhs ?rhs) =>
+      change P;
+      eassert (@lookup_term (@EGraphList.nil type) HNil _ lhs e = Some _) as FL
+        by (vm_compute; reflexivity) (*;
+      lazymatch type of FL with
+      | _ = Some ?commonId =>
+          eassert (@lookup_term (@EGraphList.nil type) HNil _ rhsR e = Some _) as FR
+            by (vm_compute; reflexivity);
+          exact (correct SpongeInv tR lhsR rhsR commonId eq_refl eq_refl FL FR)
+      end *)
+  end.
+(* BUG: reflexivity fails, which means that saturation removed terms! *)
+
+
+  (* new debug session starts here *)
+
     reify_all.
 
     lazymatch goal with
@@ -6111,11 +6264,11 @@ Section WithLib.
     | Inv : invariant_egraph ?tm ?cm ?eVal |- _ =>
         set (e := eVal) in Inv
     end.
-    let cm := eval unfold cm in cm in 
-    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd b a)) in 
+    let cm := eval unfold cm in cm in
+    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd b a)) in
     pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
-    let cm := eval unfold cm in cm in 
-    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd a b)) in 
+    let cm := eval unfold cm in cm in
+    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd a b)) in
     pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
     vm_compute in o,o0.
 

@@ -672,7 +672,7 @@ Section egraphs.
   Definition union (g : uf_t) (x y : eclass_id ) : uf_t :=
     let px := find g x in
     let py := find g y in
-    PTree.set x py (PTree.map_filter (fun el => if Pos.eq_dec el px then Some py else Some el) g).
+    PTree.map_filter (fun el => let cel := find g el in if Pos.eq_dec cel px then Some py else Some cel) g.
 
   Inductive enode : Type :=
     | EApp: eclass_id -> eclass_id -> enode
@@ -867,7 +867,7 @@ Section egraphs.
         let eid_newterm := max_allocated e in
         ({|
         max_allocated := eid_newterm + 1;
-        uf := uf e;
+        uf := PTree.set eid_newterm eid_newterm (uf e);
         (* The following canonicalize is unecessary but helps in the proof *)
         n2id := add_enode (n2id e) (canonicalize e (EApp fid arg1id)) eid_newterm;
         id2s := PTree.set eid_newterm (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _)
@@ -880,7 +880,7 @@ Section egraphs.
         let eid_newterm := max_allocated e in
         ({|
         max_allocated := eid_newterm + 1;
-        uf := uf e;
+        uf := PTree.set eid_newterm eid_newterm (uf e);
         n2id := add_enode (n2id e) (EConst n) eid_newterm;
         id2s := PTree.set eid_newterm
                           (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _) (EConst n)))
@@ -6206,10 +6206,10 @@ Section WithLib.
       unpack_tm_cm.
       pose empty_egraph as sponge.
       assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-      saturate_with {{ get_goal_reified_hack;
-               C1; A1; H;
+      saturate_with {{ get_goal_reified_hack;wadd_comm}}.
+               (* C1; A1; H;
         eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-   app_cons; skipn_cons; firstn_cons (*; sep_comm *); wadd_opp; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l }}.
+   app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; wadd_assoc; wadd_0_r; wadd_0_l }}. *)
 
   lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e

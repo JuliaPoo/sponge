@@ -2,6 +2,31 @@ Local Set Universe Polymorphism.
 Unset Universe Minimization ToSet.
 
 Set Default Goal Selector "!".
+
+Require Import Coq.Strings.String. Local Open Scope string_scope.
+
+Inductive log_t : Type :=
+| log_nil
+| log_snoc {t : Type} (sofar : log_t) (elem : t).
+
+Fixpoint append_log (l1 l2 : log_t) : log_t :=
+  match l2 with
+  | log_nil => l1
+  | log_snoc l2' e => log_snoc (append_log l1 l2') e
+  end.
+
+Notation "'log:()'" := log_nil.
+Notation "'log:(' e )" := (log_snoc log_nil e) (e at level 0, format "log:( e )").
+Notation "'log:(' e1 e2 .. en )" := (log_snoc .. (log_snoc (log_snoc log_nil e1) e2) .. en)
+  (e1 at level 0, e2 at level 0, en at level 0,
+   format "log:( e1  e2  ..  en )").
+
+Goal log:("v =" 42 "and T =" nat) =
+           log_snoc (log_snoc (log_snoc (log_snoc log_nil "v =") 42) "and T =") nat.
+  reflexivity. Abort.
+Goal log:() = log_nil. reflexivity. Abort.
+Goal log:(1) = log_snoc log_nil 1. reflexivity. Abort.
+
 Module Export Temp.
 
 Require Import PArith.
@@ -754,8 +779,16 @@ Section egraphs.
     (* enode -> eclass_id *)
     n2id : map_enode_to_eid;
     (* eclass_id -> Set enode *)
-    id2s : map_eid_to_set_of_enode
+    id2s : map_eid_to_set_of_enode;
+    (* for debugging: *)
+    log : log_t;
   }.
+
+  Definition print (msg : log_t) (e : egraph) : egraph :=
+    match e with
+    | Build_egraph max_allocated uf n2id id2s log =>
+      Build_egraph max_allocated uf n2id id2s (append_log log msg)
+    end.
 
   Definition canonicalize (e : egraph) (node : enode) : enode
   :=
@@ -818,16 +851,18 @@ Section egraphs.
   Definition merge (e : egraph) (e1 e2 : eclass_id) := {|
     max_allocated := max_allocated e;
     uf := union (uf e) e1 e2;
-    n2id :=
-      merge_n2id e1 e2 (n2id e);
-    id2s := merge_id2s e1 e2 (id2s e) |}.
+    n2id := merge_n2id e1 e2 (n2id e);
+    id2s := merge_id2s e1 e2 (id2s e);
+    log := append_log (log e) log:("Merged" e1 "and" e2 ";");
+  |}.
 
   Definition empty_egraph := {|
     max_allocated := 1;
     uf := init_uf;
     n2id := (PTree.empty _, PTree.empty _);
-    id2s := PTree.empty _
-    |}.
+    id2s := PTree.empty _;
+    log := log:();
+  |}.
 
   Section WithVars.
     Context {types_of_varmap : list type}
@@ -871,7 +906,8 @@ Section egraphs.
         (* The following canonicalize is unecessary but helps in the proof *)
         n2id := add_enode (n2id e) (canonicalize e (EApp fid arg1id)) eid_newterm;
         id2s := PTree.set eid_newterm (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _)
-        (canonicalize e (EApp fid arg1id)))) (id2s e)|}, eid_newterm)
+        (canonicalize e (EApp fid arg1id)))) (id2s e);
+        log := log e|}, eid_newterm)
         end
       | TConst n _t =>
          match lookup_term f e with
@@ -884,7 +920,8 @@ Section egraphs.
         n2id := add_enode (n2id e) (EConst n) eid_newterm;
         id2s := PTree.set eid_newterm
                           (eid_newterm, t, (add_enode_set (PTree.empty _, PTree.empty _) (EConst n)))
-                          (id2s e)|}, eid_newterm)
+                          (id2s e);
+        log := log e|}, eid_newterm)
         end
       end).
       exact (match llist_nth_error var_instantiations n with
@@ -6122,7 +6159,7 @@ Section WithLib.
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
         (f g: word -> word) (b: word)
-        (HL: length vs = 3%nat)
+        (HL: List.length vs = 3%nat)
         (H : sep (word_array a
           (List.firstn
              (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
@@ -6210,6 +6247,11 @@ Section WithLib.
                (* C1; A1; H;
         eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
    app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; wadd_assoc; wadd_0_r; wadd_0_l }}. *)
+
+  lazymatch goal with
+  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
+      let l := eval vm_compute in (log e) in idtac l
+  end.
 
   lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e

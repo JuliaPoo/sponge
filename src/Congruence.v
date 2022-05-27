@@ -818,6 +818,7 @@ Section egraphs.
           PTree.merge_l set_eatoms_l set_eatoms_r in
         let newapps :=
           PTree.merge_with set_eapp_l set_eapp_r PTree.merge_l in
+
         (* TODO: remove nodes which are not canonical in this set? *)
         let newm := PTree.set e2 (eid2, tl, (newatoms, newapps)) m in 
         {| max_allocated := max_allocated e;
@@ -826,8 +827,8 @@ Section egraphs.
             uf := uf e;
             log := log e;|}
       else
-        print log:("Should not happen, type mismatch") e
-    | _, _  => print log:("SHOULD NOT HAPPEN") e
+        print log:("Should not happen, type mismatch" e1 e2 ";") e
+    | _, _  => print log:("SHOULD NOT HAPPEN trying to merge" e1 e2 ";") e
     end.
 
   (* Definition merge_n2id (e1 e2 : eclass_id) (m : map_enode_to_eid ) : map_enode_to_eid :=
@@ -853,7 +854,7 @@ Section egraphs.
     EGraphList.fold_left (fun acc '(enode,eid) =>
     add_enode acc enode eid
     ) eapp_gather_to_change m . *)
-
+        
   Definition rebuild_n2id (uf : uf_t) (m : map_enode_to_eid ) : map_enode_to_eid :=
     let '(atms, apps) := m in
     let eapp_gather_to_change := 
@@ -904,11 +905,12 @@ Section egraphs.
               acci 
             else
             (* New class that has not been merged yet! need to merge id and newclass *)
-              update_id2s newclass id {| max_allocated := max_allocated accii;
+               print log:("ripple merge" newclass   (find (uf accii) id) ) 
+                 (update_id2s newclass id {| max_allocated := max_allocated accii;
                  log := log accii;
                  uf := union (uf accii) newclass id ;
                  n2id := n2id accii;
-                 id2s := id2s accii; |}
+                 id2s := id2s accii; |})
           | None => accii
           end)
           t_ell
@@ -922,20 +924,50 @@ Section egraphs.
       domain_ids
        e.
 
+
+  Definition prune_id2s (e:egraph) : egraph := 
+    let m := id2s e in 
+    let newm := PTree.map_filter (fun '(eid1, tl, (set_eatoms_l, set_eapp_l)) => 
+              let newapps := PTree.map_filter (fun enode_tree =>
+                                              let new_subtree := 
+                                              PTree.map_filter (fun '(el,er) => 
+                                                                  if andb (find (uf e) el =? el) (find (uf e) er =? er) 
+                                                                  then Some (el,er)
+                                                                  else None)
+                                                                  enode_tree in
+              (* Use tree_any to check if subtree is now option *)
+                  match PTree.tree_any new_subtree with 
+                  | None => None
+                  | Some _ => Some new_subtree
+                  end) set_eapp_l in
+              Some (eid1, tl, (set_eatoms_l, newapps))) m in 
+    {| 
+      max_allocated := max_allocated e;
+      uf := uf e;
+      id2s := id2s e;
+      n2id := n2id e;
+      log := log e;
+       |}.
+  
+
+
+
+
   Definition FUEL_PROPAGATE := 10%nat.
   Definition propagate_merge e := 
     PeanoNat.Nat.iter FUEL_PROPAGATE propagate_merge_1 e.
   Definition merge (e : egraph) (e1 e2 : eclass_id) := 
-  if e1 =? e2 then e else 
+  if find (uf e) e1 =? find (uf e) e2 then e else 
   let newuf :=  union (uf e) e1 e2 in
   let e := propagate_merge 
-  (update_id2s e1 e2
+  (update_id2s (find (uf e) e1) (find (uf e) e2) 
     {| max_allocated := max_allocated e;
-                                     uf := union (uf e) e1 e2;
+                                     uf := newuf;
                                      n2id := (n2id e);
                                      id2s := (id2s e);
-                                     log := append_log (log e) log:("Merged" e1 "and" e2 ";"); |})in
-  {| max_allocated := max_allocated e;
+                                     log := append_log (log e) log:("Merged" e1 (find (uf e) e1) "and" e2 (find (uf e) e2)";"); |}) in
+  
+  prune_id2s {| max_allocated := max_allocated e;
      uf := uf e;
      (* Here n2id is recanonicalized, and pruned *)
      n2id := rebuild_n2id (uf e) (n2id e);
@@ -6228,6 +6260,103 @@ Section WithLib.
     pose proof PropLemmas.eq_eq_True as eq_eq_True.
 
   Definition lipstick {A:Type} {a:A} := a.
+  Axiom magic: False.
+
+  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
+                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
+        (f g: word -> word) (b: word)
+        (HL: List.length vs = 3%nat)
+        (hyp_missing : f (wadd a b) = g b)
+        (H : sep (word_array a
+          (List.firstn
+             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+              [w1] ++ List.skipn 2 vs) ++
+           [w2] ++
+           List.skipn
+             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
+             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
+                [w1] ++ List.skipn 2 vs))) R m),
+        f (wadd b a) = g b /\
+        sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m /\
+        f (wadd b a) = f (wadd a b).
+  Proof.
+    intros.
+
+    pose_list_lemmas.
+    pose_prop_lemmas.
+    specialize (eq_eq_True word).
+    assert ( forall a b c : word,
+             wadd (wadd a b) c =
+             wadd a (wadd b c) 
+    ) as our_wadd_assoc by intuition eauto.
+    (* clear wadd_assoc. *)
+    assert (forall (x y : list word)
+             (a : word),
+            ((a :: x) ++ y)%list =
+           (a :: x ++ y)%list 
+           ) as our_app_cons by intuition eauto.
+    (* clear app_cons. *)
+
+
+    (* Make problems simpler by only considering one combination of the booleans,
+       but it would be nice to treat all of them at once *)
+    replace cond0_0 with false in * by (exfalso; eapply magic).
+    replace cond0 with false in * by (exfalso; eapply magic).
+
+    (* Make problem simpler by not requiring side conditions: since we know the
+       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
+       be on cons without sideconditions rather than on app with side conditions
+       on length *)
+    destruct vs as [|v0 vs]. 1: discriminate HL.
+    destruct vs as [|v1 vs]. 1: discriminate HL.
+    destruct vs as [|v2 vs]. 1: discriminate HL.
+    destruct vs as [|v3 vs]. 2: discriminate HL.
+    clear HL.
+    cbn.
+    (* cbn in H. <-- We don't do this cbn because now that we've done the above
+       destructs, cbn can do much more than it usually would be able to do. *)
+
+    (* Preprocessing *)
+    rewrite wsub_def in *.
+    clear wsub_def.
+    apply PropLemmas.eq_True in H.
+
+    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
+    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
+
+    (* Constant propagation rules, manually chosen to make things work,
+       TODO how to automate? *)
+    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
+
+    reify_all.
+
+    unpack_tm_cm.
+    pose empty_egraph as sponge.
+    assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
+    saturate_with {{ get_goal_reified_hack; hyp_missing; C1; A1; H
+
+    ; wadd_comm; wadd_opp; wadd_0_r
+
+    ; eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
+      app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
+
+   
+    (* ; wadd_comm *)
+   
+   ; app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm
+
+    }}.
+
+
+  Time lazymatch goal with
+  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
+      let l := eval vm_compute in (log e) in idtac l
+  end.
+  Time prove_eq_by_sponge.
+ 
+    Time Qed.
+   
 
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
@@ -6347,11 +6476,13 @@ Section WithLib.
   Time lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
       let l := eval vm_compute in (log e) in idtac l
+      (* let o182 := eval vm_compute in (PTree.get 182 (id2s e)) in
+      let o134 := eval vm_compute in (PTree.get 182 (id2s e)) in *)
   end.
+
   Time prove_eq_by_sponge.
     }
 
-    (* OLD BIG TEST FAILING *)
     pose
      ( (f (wadd b a) = g b /\
          sep R (word_array a [v0; w1; w2]) m /\
@@ -6386,66 +6517,35 @@ Section WithLib.
       unpack_tm_cm.
       pose empty_egraph as sponge.
       assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-      (* 
-      
-      Dans la classse de :
-      a -> eid_a
-      wopp  -> eid_wopp
-      wopp a -> eid_woppa
-      wadd a -> eid_wadda
-      (wadd (wopp a)) -> eid_waddwoppa
-
-      eid_total = {eapp eid_wadda eid_woppa; eapp eid_waddwopa eid_a }
-      
-      wadd a (wopp a) 
-
-      eid0 { enode }
-      *)
       saturate_with {{ get_goal_reified_hack; 
       C1; A1; H; 
-      (* wadd_comm;
+       wadd_comm;
       wadd_opp; wadd_0_r
-      ; *)
+      ; 
         eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
         app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
    ;
  eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
         app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
 
-   (* ;
+   ;
  eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
         app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
 ;
  eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l *)
+        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l 
     }}.
 
 
-  lazymatch goal with
+  Time lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
       let l := eval vm_compute in (log e) in idtac l
   end.
-  prove_eq_by_sponge.
-
-  lazymatch goal with
-  | SpongeInv : invariant_egraph ?tm ?cm ?e
-    |- @reified ?P _ (@mk_reified_qf_equ ?tR ?lhs ?rhs) =>
-    let max := eval vm_compute in ( e) in 
-    pose  max
-    end.
-    idtac max;
-      change P;
-      eassert (@lookup_term (@EGraphList.nil type) HNil _ lhs e = Some _) as FL
-        by (vm_compute; reflexivity);
-      lazymatch type of FL with
-      | _ = Some ?commonId =>
-          eassert (@lookup_term (@EGraphList.nil type) HNil _ rhs e = Some _) as FR
-            by (vm_compute; reflexivity);
-          exact (correct SpongeInv tR lhs rhs commonId eq_refl eq_refl FL FR)
-      end
-  end.
-(* BUG: reflexivity fails, which means that saturation removed terms! *)
-
+  Time prove_eq_by_sponge.
+    }
+  subst test2.
+  rewrite test2pf.
+  
 
   (* new debug session starts here *)
 

@@ -27,6 +27,51 @@ Goal log:("v =" 42 "and T =" nat) =
 Goal log:() = log_nil. reflexivity. Abort.
 Goal log:(1) = log_snoc log_nil 1. reflexivity. Abort.
 
+(* state monad with error and logging *)
+Module elstate.
+  Definition t(S A: Type) := S -> log_t -> option A * S * log_t.
+
+  Definition bind{S A B : Type}(m : t S A)(f : A -> t S B) : t S B :=
+    fun (s : S) (l : log_t) =>
+      match m s l with
+      | (Some a, s', l') => f a s' l'
+      | (None, s', l') => (None, s', l')
+      end.
+
+  Definition ret{S A : Type}(a : A) : t S A :=
+    fun (s: S) (l : log_t) => (Some a, s, l).
+
+  Definition get{S: Type}: t S S := fun (s: S) (l : log_t) => (Some s, s, l).
+
+  Definition put{S: Type}(s: S): t S unit := fun _ l => (Some tt, s, l).
+
+  Definition update{S : Type}(f : S -> S) : t S unit :=
+    fun s l => (Some tt, f s, l).
+
+  Definition abort{S A: Type}: t S A :=
+    fun (s: S) l => (None, s, l).
+
+  Definition msg{S: Type}(m : log_t): t S unit :=
+    fun (s : S) (l : log_t) => (Some tt, s, append_log l m).
+
+  Definition err{S A: Type}(e : log_t): t S A := bind (msg e) (fun _ => abort).
+End elstate.
+
+Module Import elstateNotations.
+  Declare Scope elstate_monad_scope.
+  Open Scope elstate_monad_scope.
+
+  Notation "' pat <- c1 ;; c2" := (elstate.bind c1 (fun pat => c2))
+    (at level 60, pat pattern, c1 at next level, right associativity) : elstate_monad_scope.
+
+  Notation "x <- c1 ;; c2" := (elstate.bind c1 (fun x => c2))
+    (at level 60, c1 at next level, right associativity) : elstate_monad_scope.
+
+  Notation "c1 ;; c2" := (elstate.bind c1 (fun _ => c2))
+    (at level 60, right associativity) : elstate_monad_scope.
+End elstateNotations.
+
+
 Module Export Temp.
 
 Require Import PArith.
@@ -248,12 +293,43 @@ Lemma term_eqb_eq : forall {t} (f1 : term t) (f2 : term t),
   }
   Qed.
 
+Inductive uterm :=
+| UApp(a b : uterm)
+| UVar(n : positive)
+| UConst(n : positive).
+
+Fixpoint uterm_size (u : uterm) : positive :=
+  match u with
+  | UApp a b => 1 + uterm_size a + uterm_size b
+  | UVar _ => 1
+  | UConst _ => 1
+  end.
+
+Section Typecheck.
+  Context (typemap : list Type) (types_of_consts : list type) (types_of_vars : list type).
+
+  Fixpoint typecheck(u : uterm) : option { t : type & term t }.
+    destruct u.
+    - destruct (typecheck u1) as [[t1 v1]|]. 2: exact None.
+      destruct (typecheck u2) as [[t2 v2]|]. 2: exact None.
+      destruct t1 as [ n | tArg tRet ]. 1: exact None.
+      destruct (type_eq_dec tArg t2). 2: exact None.
+      subst t2.
+      exact (Some (existT term tRet (TApp v1 v2))).
+    - destruct (nth_error types_of_vars (Pos.to_nat n - 1)) as [t |]. 2: exact None.
+      exact (Some (existT term t (TVar n t))).
+    - destruct (nth_error types_of_consts (Pos.to_nat n - 1)) as [t |]. 2: exact None.
+      exact (Some (existT term t (TConst n t))).
+  Defined.
+End Typecheck.
+
 Inductive dyn {typemap : list Type} :=
   mk_dyn { dyn_type : type ;
     dyn_val : t_denote typemap dyn_type }.
 Arguments dyn : clear implicits.
 
 Check mk_dyn [positive] `1 3.
+
 
 Inductive hlist  : list Type -> Type :=
 | HCons : forall (t : Type)
@@ -810,7 +886,7 @@ Section egraphs.
   (* So we don't consider the case where one of the two eclass has an empty set. *)
   Definition   update_id2s (e1 e2 : eclass_id) (e : egraph) : egraph :=
     (* e2 is the new canonical representant *)
-    let m := id2s e in 
+    let m := id2s e in
      match (PTree.get e1 m), (PTree.get e2 m) with
     | Some (eid1, tl, (set_eatoms_l, set_eapp_l)), Some (eid2, tr, (set_eatoms_r, set_eapp_r)) =>
       if type_eq_dec tl tr then
@@ -820,10 +896,10 @@ Section egraphs.
           PTree.merge_with set_eapp_l set_eapp_r PTree.merge_l in
 
         (* TODO: remove nodes which are not canonical in this set? *)
-        let newm := PTree.set e2 (eid2, tl, (newatoms, newapps)) m in 
+        let newm := PTree.set e2 (eid2, tl, (newatoms, newapps)) m in
         {| max_allocated := max_allocated e;
             id2s := newm;
-            n2id := n2id e; 
+            n2id := n2id e;
             uf := uf e;
             log := log e;|}
       else
@@ -854,10 +930,10 @@ Section egraphs.
     EGraphList.fold_left (fun acc '(enode,eid) =>
     add_enode acc enode eid
     ) eapp_gather_to_change m . *)
-        
+
   Definition rebuild_n2id (uf : uf_t) (m : map_enode_to_eid ) : map_enode_to_eid :=
     let '(atms, apps) := m in
-    let eapp_gather_to_change := 
+    let eapp_gather_to_change :=
       PTree.tree_fold_preorder (fun acc val  =>
         PTree.tree_fold_preorder (fun acci '(enode,eid) =>
                                     match enode with
@@ -889,23 +965,23 @@ Section egraphs.
     (* e2 is the new canonical representant *)
     let domain_ids := rev_seq_pos (max_allocated e)
     in
-    EGraphList.fold_left 
+    EGraphList.fold_left
       (fun acc id =>
-      if find (uf acc) id =? id then 
+      if find (uf acc) id =? id then
       (* Currently canonical *)
       match PTree.get id (id2s acc) with
       | Some (_, _t, (set_consts, set_apps)) =>
         PTree.tree_fold_preorder
-          (fun acci t_ell => 
+          (fun acci t_ell =>
           PTree.tree_fold_preorder
-          (fun accii '(ell, elr) => 
+          (fun accii '(ell, elr) =>
           match lookup accii (EApp ell elr) with
-          | Some newclass => 
-            if newclass =? (find (uf accii) id) then  
-              acci 
+          | Some newclass =>
+            if newclass =? (find (uf accii) id) then
+              acci
             else
             (* New class that has not been merged yet! need to merge id and newclass *)
-               print log:("ripple merge" newclass   (find (uf accii) id) ) 
+               print log:("ripple merge" newclass   (find (uf accii) id) )
                  (update_id2s newclass id {| max_allocated := max_allocated accii;
                  log := log accii;
                  uf := union (uf accii) newclass id ;
@@ -925,48 +1001,48 @@ Section egraphs.
        e.
 
 
-  Definition prune_id2s (e:egraph) : egraph := 
-    let m := id2s e in 
-    let newm := PTree.map_filter (fun '(eid1, tl, (set_eatoms_l, set_eapp_l)) => 
+  Definition prune_id2s (e:egraph) : egraph :=
+    let m := id2s e in
+    let newm := PTree.map_filter (fun '(eid1, tl, (set_eatoms_l, set_eapp_l)) =>
               let newapps := PTree.map_filter (fun enode_tree =>
-                                              let new_subtree := 
-                                              PTree.map_filter (fun '(el,er) => 
-                                                                  if andb (find (uf e) el =? el) (find (uf e) er =? er) 
+                                              let new_subtree :=
+                                              PTree.map_filter (fun '(el,er) =>
+                                                                  if andb (find (uf e) el =? el) (find (uf e) er =? er)
                                                                   then Some (el,er)
                                                                   else None)
                                                                   enode_tree in
               (* Use tree_any to check if subtree is now option *)
-                  match PTree.tree_any new_subtree with 
+                  match PTree.tree_any new_subtree with
                   | None => None
                   | Some _ => Some new_subtree
                   end) set_eapp_l in
-              Some (eid1, tl, (set_eatoms_l, newapps))) m in 
-    {| 
+              Some (eid1, tl, (set_eatoms_l, newapps))) m in
+    {|
       max_allocated := max_allocated e;
       uf := uf e;
       id2s := id2s e;
       n2id := n2id e;
       log := log e;
        |}.
-  
+
 
 
 
 
   Definition FUEL_PROPAGATE := 10%nat.
-  Definition propagate_merge e := 
+  Definition propagate_merge e :=
     PeanoNat.Nat.iter FUEL_PROPAGATE propagate_merge_1 e.
-  Definition merge (e : egraph) (e1 e2 : eclass_id) := 
-  if find (uf e) e1 =? find (uf e) e2 then e else 
+  Definition merge (e : egraph) (e1 e2 : eclass_id) :=
+  if find (uf e) e1 =? find (uf e) e2 then e else
   let newuf :=  union (uf e) e1 e2 in
-  let e := propagate_merge 
-  (update_id2s (find (uf e) e1) (find (uf e) e2) 
+  let e := propagate_merge
+  (update_id2s (find (uf e) e1) (find (uf e) e2)
     {| max_allocated := max_allocated e;
                                      uf := newuf;
                                      n2id := (n2id e);
                                      id2s := (id2s e);
                                      log := append_log (log e) log:("Merged" e1 (find (uf e) e1) "and" e2 (find (uf e) e2)";"); |}) in
-  
+
   prune_id2s {| max_allocated := max_allocated e;
      uf := uf e;
      (* Here n2id is recanonicalized, and pruned *)
@@ -981,6 +1057,85 @@ Section egraphs.
     id2s := PTree.empty _;
     log := log:();
   |}.
+
+  Definition elstate_fold_ptree {S E A : Type} (f : A -> E -> elstate.t S A)
+             (t : PTree.t E) (init : A) : elstate.t S A := fun s l =>
+    PTree.tree_fold_preorder
+      (fun (acc: option A * S * log_t) (e : E) =>
+         match acc with
+         | (Some a, s, l) => f a e s l
+         | _ => acc
+         end)
+      t (Some init, s, l).
+
+  (* Note: Currently, snd of set_of_enodes is of type
+     PTree.t (PTree.t (eclass_id * eclass_id))
+     If it was instead of type
+     PTree.t (eclass_id * PTree.t eclass_id)
+     ie the first-level keys are stored at the first level rather than duplicated at
+     each second level, then folds where each iteration computes some value for the first
+     key independently of the second key could avoid redoing this computation.
+     On the other hand, if we use memoization, the benefit is only small.
+     If we make this change, the following convenient function will not be possible any more:
+   *)
+  Definition elstate_fold_set_of_pos_pairs {S A : Type}
+             (f : A -> (positive * positive) -> elstate.t S A) :
+             PTree.t (PTree.t (positive * positive)) -> A -> elstate.t S A :=
+    elstate_fold_ptree (fun a tree => elstate_fold_ptree f tree a).
+
+  Section Smallest.
+    Context (e: egraph).
+
+    Fixpoint smallest_rep_aux (fuel : nat) (eid : eclass_id)
+      : elstate.t (PTree.t (option (uterm * positive))) (uterm * positive) :=
+      match fuel with
+      | O => elstate.err log:("out of fuel")
+      | S fuel =>
+          memo <- elstate.get;;
+          match PTree.get eid memo with
+          | Some (Some v) => elstate.ret v
+          | Some None => elstate.err log:("Cycle at eclass_id" eid)
+          | None =>
+              match PTree.get eid (id2s e) with
+              | Some (_eid, _t, (constset, appset)) =>
+                  match PTree.tree_any constset with
+                  | Some n => elstate.ret (UConst n, 1)
+                  | None =>
+                      (* mark that computation of eid has started *)
+                      elstate.update (PTree.set eid None);;
+                      o <- elstate_fold_set_of_pos_pairs
+                             (fun (acc : option (uterm * positive)) '(fId, argId) =>
+                                '(tf, szf) <- smallest_rep_aux fuel fId;;
+                                '(ta, sza) <- smallest_rep_aux fuel argId;;
+                                let sznew := 1 + szf + sza in
+                                let tnew := UApp tf ta in
+                                elstate.ret (match acc with
+                                | Some (best, szbest) =>
+                                    if Pos.ltb sznew szbest then Some (tnew, sznew) else acc
+                                | None => Some (tnew, sznew)
+                                end))
+                             appset
+                             None;;
+                      match o with
+                      | Some v => elstate.ret v
+                      | None => elstate.err log:("eclass_id" eid "has an empty id2s")
+                      end
+                  end
+              | None => elstate.err log:("eclass_id" eid "not in id2s")
+              end
+          end
+      end.
+
+  End Smallest.
+
+  Definition FUEL := 30%nat.
+
+  Definition smallest_rep_top (types_of_consts : list type)
+             (e : egraph) (eid : eclass_id) : option {t : type & term t} :=
+    match smallest_rep_aux e FUEL eid (Enodes.PTree.empty _) log_nil with
+    | (Some (u, sz), _, _) => typecheck types_of_consts [] u
+    | _ => None
+    end.
 
   Section WithVars.
     Context {types_of_varmap : list type}
@@ -1488,8 +1643,6 @@ end.
     exact ({| T := _; state := y (state x) |}).
 Defined. *)
 
-
-  Definition FUEL := 30%nat.
 
 (* I will do translation validation for hte match pattern, that will be the easiest.
 Validator will simply return a boolean if the candidate matches the pattern and hence if the fn is correct *)
@@ -6288,13 +6441,13 @@ Section WithLib.
     specialize (eq_eq_True word).
     assert ( forall a b c : word,
              wadd (wadd a b) c =
-             wadd a (wadd b c) 
+             wadd a (wadd b c)
     ) as our_wadd_assoc by intuition eauto.
     (* clear wadd_assoc. *)
     assert (forall (x y : list word)
              (a : word),
             ((a :: x) ++ y)%list =
-           (a :: x ++ y)%list 
+           (a :: x ++ y)%list
            ) as our_app_cons by intuition eauto.
     (* clear app_cons. *)
 
@@ -6341,22 +6494,47 @@ Section WithLib.
     ; eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
       app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
 
-   
+
     (* ; wadd_comm *)
-   
+
    ; app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm
 
     }}.
 
+    let types_of_constmap :=
+      (let cm_u := eval cbv delta [cm] in cm in
+         ltac_map ltac:(fun d => lazymatch d with
+                                 | mk_dyn _ ?t _ => t
+                                 end) cm_u) in
+    lazymatch goal with
+    | SpongeInv : invariant_egraph ?tm ?cm ?e
+      |- @reified _ _ (mk_reified_qf_equ ?lhs ?rhs) =>
+        let idL := eval vm_compute in (@lookup_term (@EGraphList.nil type) HNil _ lhs e) in
+        idtac idL;
+        lazymatch idL with
+        | Some ?idL => let r := eval vm_compute in
+                      (smallest_rep_top types_of_constmap e idL) in
+                         idtac r
+        | None => idtac "lookup failed"
+        end
+    end.
+
+    let r := constr:(Some (existT (fun t : type => term t) `1 (TConst 31 `1))) in
+    lazymatch r with
+    | Some (existT _ ?tp ?t) => eassert (interp_term tm cm EGraphList.nil HNil t eq_refl = _)
+    end.
+    {
+      simpl. reflexivity.
+    }
 
   Time lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
       let l := eval vm_compute in (log e) in idtac l
   end.
   Time prove_eq_by_sponge.
- 
+
     Time Qed.
-   
+
 
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
@@ -6383,13 +6561,13 @@ Section WithLib.
     specialize (eq_eq_True word).
     assert ( forall a b c : word,
              wadd (wadd a b) c =
-             wadd a (wadd b c) 
+             wadd a (wadd b c)
     ) as our_wadd_assoc by intuition eauto.
     (* clear wadd_assoc. *)
     assert (forall (x y : list word)
              (a : word),
             ((a :: x) ++ y)%list =
-           (a :: x ++ y)%list 
+           (a :: x ++ y)%list
            ) as our_app_cons by intuition eauto.
     (* clear app_cons. *)
 
@@ -6517,11 +6695,11 @@ Section WithLib.
       unpack_tm_cm.
       pose empty_egraph as sponge.
       assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-      saturate_with {{ get_goal_reified_hack; 
-      C1; A1; H; 
+      saturate_with {{ get_goal_reified_hack;
+      C1; A1; H;
        wadd_comm;
       wadd_opp; wadd_0_r
-      ; 
+      ;
         eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
         app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
    ;
@@ -6533,7 +6711,7 @@ Section WithLib.
         app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
 ;
  eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l 
+        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
     }}.
 
 
@@ -6545,7 +6723,6 @@ Section WithLib.
     }
   subst test2.
   rewrite test2pf.
-  
 
   (* new debug session starts here *)
 

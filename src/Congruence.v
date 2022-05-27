@@ -15,14 +15,18 @@ Fixpoint append_log (l1 l2 : log_t) : log_t :=
   | log_snoc l2' e => log_snoc (append_log l1 l2') e
   end.
 
+Inductive newline := .
+
+Notation "" := newline (only printing, format "'//'").
+
 Notation "'log:()'" := log_nil.
 Notation "'log:(' e )" := (log_snoc log_nil e) (e at level 0, format "log:( e )").
 Notation "'log:(' e1 e2 .. en )" := (log_snoc .. (log_snoc (log_snoc log_nil e1) e2) .. en)
   (e1 at level 0, e2 at level 0, en at level 0,
    format "log:( e1  e2  ..  en )").
 
-Goal log:("v =" 42 "and T =" nat) =
-           log_snoc (log_snoc (log_snoc (log_snoc log_nil "v =") 42) "and T =") nat.
+Goal log:(newline "v =" 42 newline "T =" nat) =
+           log_snoc (log_snoc (log_snoc (log_snoc (log_snoc (log_snoc log_nil newline) "v =") 42) newline) "T =") nat.
   reflexivity. Abort.
 Goal log:() = log_nil. reflexivity. Abort.
 Goal log:(1) = log_snoc log_nil 1. reflexivity. Abort.
@@ -52,7 +56,7 @@ Module elstate.
     fun (s: S) l => (None, s, l).
 
   Definition msg{S: Type}(m : log_t): t S unit :=
-    fun (s : S) (l : log_t) => (Some tt, s, append_log l m).
+    fun (s : S) (l : log_t) => (Some tt, s, append_log (log_snoc l newline) m).
 
   Definition err{S A: Type}(e : log_t): t S A := bind (msg e) (fun _ => abort).
 End elstate.
@@ -1086,40 +1090,61 @@ Section egraphs.
   Section Smallest.
     Context (e: egraph).
 
+    (* memoization map contains None for all pending arguments on the call stack *)
     Fixpoint smallest_rep_aux (fuel : nat) (eid : eclass_id)
-      : elstate.t (PTree.t (option (uterm * positive))) (uterm * positive) :=
+      : elstate.t (PTree.t (option (uterm * positive))) (option (uterm * positive)) :=
       match fuel with
       | O => elstate.err log:("out of fuel")
       | S fuel =>
           memo <- elstate.get;;
           match PTree.get eid memo with
-          | Some (Some v) => elstate.ret v
-          | Some None => elstate.err log:("Cycle at eclass_id" eid)
+          | Some ov => elstate.ret ov (* If ov is Some, we have already computed the result,
+             and if it is None, there's a cycle at eid, and computation has already
+             started at eid, so if we continued here, we'd only find bigger terms,
+             so we can stop *)
           | None =>
               match PTree.get eid (id2s e) with
               | Some (_eid, _t, (constset, appset)) =>
                   match PTree.tree_any constset with
-                  | Some n => elstate.ret (UConst n, 1)
+                  | Some n => let newres := Some (UConst n, 1) in
+                              elstate.update (PTree.set eid newres);;
+                              elstate.ret newres
                   | None =>
                       (* mark that computation of eid has started *)
                       elstate.update (PTree.set eid None);;
-                      o <- elstate_fold_set_of_pos_pairs
-                             (fun (acc : option (uterm * positive)) '(fId, argId) =>
-                                '(tf, szf) <- smallest_rep_aux fuel fId;;
-                                '(ta, sza) <- smallest_rep_aux fuel argId;;
-                                let sznew := 1 + szf + sza in
-                                let tnew := UApp tf ta in
-                                elstate.ret (match acc with
-                                | Some (best, szbest) =>
-                                    if Pos.ltb sznew szbest then Some (tnew, sznew) else acc
-                                | None => Some (tnew, sznew)
-                                end))
-                             appset
-                             None;;
-                      match o with
-                      | Some v => elstate.ret v
-                      | None => elstate.err log:("eclass_id" eid "has an empty id2s")
-                      end
+                      (*elstate.msg log:("Entering" eid);;*)
+                      elstate_fold_set_of_pos_pairs
+                        (fun (acc : option (uterm * positive)) '(fId, argId) =>
+                           recf <- smallest_rep_aux fuel fId;;
+                           match recf with
+                           | Some (tf, szf) =>
+                               reca <- smallest_rep_aux fuel argId;;
+                               match reca with
+                               | Some (ta, sza) =>
+                                   let sznew := 1 + szf + sza in
+                                   let newbetter :=
+                                     match acc with
+                                     | Some (best, szbest) => Pos.ltb sznew szbest
+                                     | None => true
+                                     end in
+                                   (*elstate.msg log:("acc:" acc);;*)
+                                   if newbetter then
+                                     let newres := Some (UApp tf ta, sznew) in
+                                     elstate.update (PTree.set eid newres);;
+                                     (*elstate.msg log:("Found" eid "min size =" sznew);;*)
+                                     elstate.ret newres
+                                   else
+                                     elstate.ret acc
+                               | None =>
+                                   (* arg of EApp already on call stack *)
+                                   elstate.ret acc
+                               end
+                           | None =>
+                               (* f of EApp already on call stack *)
+                               elstate.ret acc
+                           end)
+                        appset
+                        None
                   end
               | None => elstate.err log:("eclass_id" eid "not in id2s")
               end
@@ -1133,7 +1158,7 @@ Section egraphs.
   Definition smallest_rep_top (types_of_consts : list type)
              (e : egraph) (eid : eclass_id) : option {t : type & term t} :=
     match smallest_rep_aux e FUEL eid (Enodes.PTree.empty _) log_nil with
-    | (Some (u, sz), _, _) => typecheck types_of_consts [] u
+    | (Some (Some (u, sz)), _, _) => typecheck types_of_consts [] u
     | _ => None
     end.
 
@@ -6482,24 +6507,38 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
+    set (simpgoal1 := (f (wadd (wopp a) (wadd b a)) = f b)).
+    assert simpgoal1 as simpgoal1pf. {
+      unfold simpgoal1.
+      rewrite (wadd_comm b a).
+      rewrite (wadd_assoc (wopp a) a b).
+      rewrite (wadd_comm (wopp a) a).
+      rewrite (wadd_opp a).
+      rewrite (wadd_comm (ZToWord 0) b).
+      rewrite (wadd_0_r b).
+      reflexivity.
+    }
+    clear simpgoal1pf.
+
+    assert simpgoal1 as simpgoal1pf. {
+      unfold simpgoal1.
+
+      clear hyp_missing.
+
     reify_all.
 
     unpack_tm_cm.
     pose empty_egraph as sponge.
     assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-    saturate_with {{ get_goal_reified_hack; hyp_missing; C1; A1; H
-
-    ; wadd_comm; wadd_opp; wadd_0_r
-
-    ; eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-      app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-
-
-    (* ; wadd_comm *)
-
-   ; app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm
-
+    saturate_with {{ get_goal_reified_hack;
+      wadd_comm;
+      wadd_assoc;
+      wadd_comm;
+      wadd_opp;
+      wadd_comm;
+      wadd_0_r
     }}.
+    assert_succeeds (idtac; solve [prove_eq_by_sponge]).
 
     let types_of_constmap :=
       (let cm_u := eval cbv delta [cm] in cm in
@@ -6512,20 +6551,51 @@ Section WithLib.
         let idL := eval vm_compute in (@lookup_term (@EGraphList.nil type) HNil _ lhs e) in
         idtac idL;
         lazymatch idL with
-        | Some ?idL => let r := eval vm_compute in
-                      (smallest_rep_top types_of_constmap e idL) in
-                         idtac r
-        | None => idtac "lookup failed"
+        | Some ?idL =>
+        let r := eval vm_compute in (smallest_rep_aux e FUEL idL (Enodes.PTree.empty _) log_nil) in
+          lazymatch r with
+          | (?o, ?m, ?l) =>
+              idtac o l;
+              lazymatch o with
+              | Some (Some (?u, ?sz)) =>
+                  idtac "minimal size:" sz "term: " u;
+                  let tc := eval vm_compute in (typecheck types_of_constmap EGraphList.nil u) in
+                           lazymatch tc with
+                           | Some (existT _ ?tp ?t) =>
+                            eassert (interp_term tm cm EGraphList.nil HNil t eq_refl = _)
+                           | None => idtac "typecheck failed"
+                           end
+              | _ => idtac "smallest_rep_aux failed"
+              end
+          end
+        | None => idtac "lookup_term failed"
         end
     end.
+    { simpl. reflexivity. }
 
-    let r := constr:(Some (existT (fun t : type => term t) `1 (TConst 31 `1))) in
-    lazymatch r with
-    | Some (existT _ ?tp ?t) => eassert (interp_term tm cm EGraphList.nil HNil t eq_refl = _)
-    end.
-    {
-      simpl. reflexivity.
+  Time lazymatch goal with
+  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
+      let l := eval vm_compute in (log e) in idtac l
+  end.
+  Time prove_eq_by_sponge.
     }
+
+     reify_all.
+
+     unpack_tm_cm.
+     pose empty_egraph as sponge.
+     assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
+    saturate_with {{ get_goal_reified_hack; hyp_missing; C1; A1; H
+
+    ; wadd_comm; wadd_opp; wadd_0_r
+
+    ; eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
+      app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
+
+
+    (* ; wadd_comm *)
+
+   ; app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm }}.
 
   Time lazymatch goal with
   | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
@@ -6534,7 +6604,6 @@ Section WithLib.
   Time prove_eq_by_sponge.
 
     Time Qed.
-
 
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)

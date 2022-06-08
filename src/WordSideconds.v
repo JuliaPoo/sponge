@@ -1,40 +1,81 @@
 Require Import Coq.ZArith.ZArith. Open Scope Z_scope.
 Require Import Coq.micromega.Lia.
+Require Import Coq.Logic.PropExtensionality.
+Set Default Goal Selector "!".
 
-Module Z.
-  Lemma mul_le : forall e1 e2 : Z, (0 <= e1) = True -> (0 <= e2) = True -> (0 <= e1 * e2) = True.
-  Proof. intros.
-    Require Import Coq.Logic.PropExtensionality.
-    eapply propositional_extensionality .
-    split; intros.
-    eauto.
-    assert ( 0 <= e1).
-    rewrite H.
-    eauto.
-    assert ( 0 <= e2).
-    rewrite H0.
-    eauto.
-    nia. Qed.
+Lemma invert_eq_True: forall (P: Prop), P = True -> P.
+Proof. intros; subst; auto. Qed.
+Lemma prove_eq_True: forall (P: Prop), P -> P = True.
+Proof.
+  intros. apply propositional_extensionality. split; auto.
+Qed.
+Lemma invert_eq_False: forall (P: Prop), P = False -> ~ P.
+Proof. intros. intro C. subst. assumption. Qed.
+Lemma prove_eq_False: forall (P: Prop), ~ P -> P = False.
+Proof.
+  intros. apply propositional_extensionality. split; intuition idtac.
+Qed.
+
+Lemma eq_eq_sym: forall {A: Type} (x y: A), (x = y) = (y = x).
+Proof.
+  intros. apply propositional_extensionality. split; intros; congruence.
+Qed.
+
+Ltac deTrue :=
+  repeat match goal with
+         | H: _ = True |- _ => eapply invert_eq_True in H
+         | H: _ = False |- _ => eapply invert_eq_False in H
+         end;
+  try apply prove_eq_True;
+  try apply prove_eq_False.
+
+Lemma eq_True_holds: forall (P: Prop), P = True <-> P.
+Proof.
+  split; intros; subst; auto.
+  apply propositional_extensionality. split; auto.
+Qed.
+
+Module ZT.
+  Lemma mul_le : forall e1 e2 : Z,
+      (0 <= e1) = True -> (0 <= e2) = True -> (0 <= e1 * e2) = True.
+  Proof.
+    intros. deTrue. nia.
+  Qed.
 
   Lemma div_mul_lt: forall x d1 d2,
       (0 < x = True)->
       (0 < d1 = True) ->
       (d1 < d2 = True)->
       (x / d2 * d1 < x = True).
-  Proof. intros. Z.to_euclidean_division_equations.
-   assert (0 < x). rewrite H; eauto.
-   assert (0 < d1). rewrite H0; eauto .
-   assert (d1 < d2). rewrite H1; eauto .
-   eapply propositional_extensionality.
-   split;
-   Lia.nia. Qed.
+  Proof.
+    intros. deTrue. Z.to_euclidean_division_equations. nia.
+  Qed.
 
   Lemma lt_from_le_and_neq: forall x y,
-      x <= y -> x <> y -> x < y.
-  Proof. intros. Lia.lia. Qed.
-End Z.
+      x <= y = True -> (x = y) = False -> x < y = True.
+  Proof. intros. deTrue. lia. Qed.
+
+  Lemma le_lt_trans : forall m n p : Z, n <= m = True -> m < p = True -> n < p = True.
+  Proof.
+    intros. deTrue. lia.
+  Qed.
+
+  Lemma mod_le : forall a b : Z, 0 <= a = True -> 0 < b = True -> a mod b <= a = True.
+  Proof.
+    intros. deTrue. eapply Z.mod_le; assumption.
+  Qed.
+
+  Lemma div_pos : forall a b : Z, 0 <= a = True -> 0 < b = True -> 0 <= a / b = True.
+  Proof.
+    intros. deTrue. eapply Z.div_pos; auto.
+  Qed.
+
+End ZT.
 
 Lemma neq_sym{A: Type}: forall (x y: A), x <> y -> y <> x. congruence. Qed.
+
+Ltac consts :=
+  cbv; apply propositional_extensionality; split; intuition discriminate.
 
 Section WithLib.
   Context (word: Type)
@@ -54,50 +95,60 @@ Section WithLib.
 
   Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
 
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 = True -> unsigned (ZToWord a) = a).
 
-  Context (unsigned_nonneg: forall x : word, 0 <= (unsigned x))
+  Context (unsigned_nonneg: forall x : word, 0 <= unsigned x = True)
           (unsigned_sru_to_div_pow2: forall (x : word) (a : Z),
-              0 <= a < 32 ->
+              0 <= a < 32 = True ->
               (unsigned (wsru x (ZToWord a))) = (unsigned x) / 2 ^ a)
           (unsigned_slu_to_mul_pow2: forall (x : word) (a : Z),
-              0 <= a < 32 ->
+              0 <= a < 32 = True ->
               (unsigned (wslu x (ZToWord a))) = ((unsigned x) * 2 ^ a) mod 2 ^ 32)
           (word_sub_add_l_same_l: forall x y : word, (wsub (wadd x y) x) = y).
 
   Lemma bsearch_sideconds1: forall (x : list word) (x1 x2 : word),
       unsigned (wsub x2 x1) = 8 * Z.of_nat (length x) ->
-      unsigned (wsub x2 x1) <> 0 ->
+      (unsigned (wsub x2 x1) = 0) = False ->
       unsigned (wsub (wadd x1 (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) x1) <
-        unsigned (ZToWord 8) * Z.of_nat (length x).
+        unsigned (ZToWord 8) * Z.of_nat (length x)
+      = True.
   Proof.
     intros.
 
     (* sideconditions about consts: *)
-    assert (0 <= 8 < 2 ^ 32 ) as C1 by lia.
-    assert (0 <= 3 < 32) as C2 by lia.
-    assert (0 <= 4 < 32) as C3 by lia.
-    assert (0 <= 2 ^ 3) as C4 by lia.
-    assert (0 < 2 ^ 4) as C5 by lia.
-    assert (0 < 2 ^ 32) as C6 by lia.
-    assert (0 < 2 ^ 3) as C7 by lia.
-    assert (2 ^ 3 < 2 ^ 4) as C8 by lia.
+    assert (0 <= 8 < 2 ^ 32 = True) as C1 by consts.
+    assert (0 <= 3 < 32 = True) as C2 by consts.
+    assert (0 <= 4 < 32 = True) as C3 by consts.
+    assert (0 <= 2 ^ 3 = True) as C4 by consts.
+    assert (0 < 2 ^ 4 = True) as C5 by consts.
+    assert (0 < 2 ^ 32 = True) as C6 by consts.
+    assert (0 < 2 ^ 3 = True) as C7 by consts.
+    assert (2 ^ 3 < 2 ^ 4 = True) as C8 by consts.
 
     rewrite unsigned_of_Z by exact C1.
     rewrite <- H.
     rewrite word_sub_add_l_same_l.
     rewrite unsigned_slu_to_mul_pow2 by exact C2.
     rewrite unsigned_sru_to_div_pow2 by exact C3.
-    (* implication, not <->, so we can't rewrite with equality! *)
-    eapply Z.le_lt_trans. 1: eapply Z.mod_le.
-    { eapply Z.mul_le. 2: exact C4.
-      eapply Z.div_pos. 2: exact C5.
-      eapply unsigned_nonneg. }
-    { exact C6. }
-    eapply Z.div_mul_lt. 2: exact C6. 2: exact C7.
-    eapply Z.lt_from_le_and_neq.
-    1: apply unsigned_nonneg.
-    apply neq_sym.
-    apply H0.
+    rewrite (ZT.le_lt_trans (unsigned (wsub x2 x1) / 2 ^ 4 * 2 ^ 3)).
+    { reflexivity. }
+    { rewrite ZT.mod_le.
+      { reflexivity. }
+      { rewrite ZT.mul_le.
+        { reflexivity. }
+        { rewrite ZT.div_pos.
+          { reflexivity. }
+          { rewrite unsigned_nonneg. reflexivity. }
+          { exact C5. } }
+        { exact C4. } }
+      { exact C7. } }
+    rewrite ZT.div_mul_lt.
+    { reflexivity. }
+    { rewrite ZT.lt_from_le_and_neq.
+      { reflexivity. }
+      { apply unsigned_nonneg. }
+      { rewrite (eq_eq_sym 0 (unsigned (wsub x2 x1))). exact H0. } }
+    { exact C7. }
+    { exact C8. }
   Qed.
 End WithLib.

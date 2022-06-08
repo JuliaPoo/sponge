@@ -2,15 +2,32 @@ Require Import Coq.ZArith.ZArith. Open Scope Z_scope.
 Require Import Coq.micromega.Lia.
 
 Module Z.
-  Lemma mul_le : forall e1 e2 : Z, 0 <= e1 -> 0 <= e2 -> 0 <= e1 * e2.
-  Proof. intros. nia. Qed.
+  Lemma mul_le : forall e1 e2 : Z, (0 <= e1) = True -> (0 <= e2) = True -> (0 <= e1 * e2) = True.
+  Proof. intros.
+    Require Import Coq.Logic.PropExtensionality.
+    eapply propositional_extensionality .
+    split; intros.
+    eauto.
+    assert ( 0 <= e1).
+    rewrite H.
+    eauto.
+    assert ( 0 <= e2).
+    rewrite H0.
+    eauto.
+    nia. Qed.
 
   Lemma div_mul_lt: forall x d1 d2,
-      0 < x ->
-      0 < d1 ->
-      d1 < d2 ->
-      x / d2 * d1 < x.
-  Proof. intros. Z.to_euclidean_division_equations. Lia.nia. Qed.
+      (0 < x = True)->
+      (0 < d1 = True) ->
+      (d1 < d2 = True)->
+      (x / d2 * d1 < x = True).
+  Proof. intros. Z.to_euclidean_division_equations.
+   assert (0 < x). rewrite H; eauto.
+   assert (0 < d1). rewrite H0; eauto .
+   assert (d1 < d2). rewrite H1; eauto .
+   eapply propositional_extensionality.
+   split;
+   Lia.nia. Qed.
 
   Lemma lt_from_le_and_neq: forall x y,
       x <= y -> x <> y -> x < y.
@@ -57,7 +74,7 @@ Section WithLib.
     intros.
 
     (* sideconditions about consts: *)
-    assert (0 <= 8 < 2 ^ 32) as C1 by lia.
+    assert (0 <= 8 < 2 ^ 32 ) as C1 by lia.
     assert (0 <= 3 < 32) as C2 by lia.
     assert (0 <= 4 < 32) as C3 by lia.
     assert (0 <= 2 ^ 3) as C4 by lia.

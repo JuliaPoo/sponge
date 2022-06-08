@@ -65,6 +65,15 @@ Module ZT.
     intros. deTrue. eapply Z.mod_le; assumption.
   Qed.
 
+  Lemma forget_mod_in_lt_l : forall a b m : Z,
+      0 <= a = True ->
+      0 < m = True ->
+      a < b = True ->
+      a mod m < b = True.
+  Proof.
+    intros. deTrue. eapply Z.le_lt_trans. 1: eapply Z.mod_le. all: assumption.
+  Qed.
+
   Lemma div_pos : forall a b : Z, 0 <= a = True -> 0 < b = True -> 0 <= a / b = True.
   Proof.
     intros. deTrue. eapply Z.div_pos; auto.
@@ -106,24 +115,57 @@ Section WithLib.
               (unsigned (wslu x (ZToWord a))) = ((unsigned x) * 2 ^ a) mod 2 ^ 32)
           (word_sub_add_l_same_l: forall x y : word, (wsub (wadd x y) x) = y).
 
-  Lemma bsearch_sideconds1: forall (x : list word) (x1 x2 : word),
+  Ltac pose_const_sideconds :=
+    assert (0 <= 8 < 2 ^ 32 = True) as C1 by consts;
+    assert (0 <= 3 < 32 = True) as C2 by consts;
+    assert (0 <= 4 < 32 = True) as C3 by consts;
+    assert (0 <= 2 ^ 3 = True) as C4 by consts;
+    assert (0 < 2 ^ 4 = True) as C5 by consts;
+    assert (0 < 2 ^ 32 = True) as C6 by consts;
+    assert (0 < 2 ^ 3 = True) as C7 by consts;
+    assert (2 ^ 3 < 2 ^ 4 = True) as C8 by consts.
+
+  Definition bsearch_goal1 := forall (x : list word) (x1 x2 : word),
       unsigned (wsub x2 x1) = 8 * Z.of_nat (length x) ->
       (unsigned (wsub x2 x1) = 0) = False ->
       unsigned (wsub (wadd x1 (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) x1) <
         unsigned (ZToWord 8) * Z.of_nat (length x)
       = True.
-  Proof.
-    intros.
 
-    (* sideconditions about consts: *)
-    assert (0 <= 8 < 2 ^ 32 = True) as C1 by consts.
-    assert (0 <= 3 < 32 = True) as C2 by consts.
-    assert (0 <= 4 < 32 = True) as C3 by consts.
-    assert (0 <= 2 ^ 3 = True) as C4 by consts.
-    assert (0 < 2 ^ 4 = True) as C5 by consts.
-    assert (0 < 2 ^ 32 = True) as C6 by consts.
-    assert (0 < 2 ^ 3 = True) as C7 by consts.
-    assert (2 ^ 3 < 2 ^ 4 = True) as C8 by consts.
+  Lemma bsearch_goal1_proof_without_transitivity: bsearch_goal1.
+  Proof.
+    unfold bsearch_goal1. intros. pose_const_sideconds.
+
+    (* This proof does not use any lemmas with universally quantified variables
+       that don't appear in the conclusion (like eg transitivity) *)
+    rewrite unsigned_of_Z by exact C1.
+    rewrite <- H.
+    rewrite word_sub_add_l_same_l.
+    rewrite unsigned_slu_to_mul_pow2 by exact C2.
+    rewrite unsigned_sru_to_div_pow2 by exact C3.
+    rewrite ZT.forget_mod_in_lt_l.
+    { reflexivity. }
+    { rewrite ZT.mul_le.
+      { reflexivity. }
+      { rewrite ZT.div_pos.
+        { reflexivity. }
+        { rewrite unsigned_nonneg. reflexivity. }
+        { exact C5. } }
+      { exact C4. } }
+    { exact C7. }
+    rewrite ZT.div_mul_lt.
+    { reflexivity. }
+    { rewrite ZT.lt_from_le_and_neq.
+      { reflexivity. }
+      { apply unsigned_nonneg. }
+      { rewrite (eq_eq_sym 0 (unsigned (wsub x2 x1))). exact H0. } }
+    { exact C7. }
+    { exact C8. }
+  Qed.
+
+  Lemma bsearch_goal1_proof1: bsearch_goal1.
+  Proof.
+    unfold bsearch_goal1. intros. pose_const_sideconds.
 
     rewrite unsigned_of_Z by exact C1.
     rewrite <- H.
@@ -151,4 +193,6 @@ Section WithLib.
     { exact C7. }
     { exact C8. }
   Qed.
+
+
 End WithLib.

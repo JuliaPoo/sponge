@@ -1,0 +1,17 @@
+*~
+*.aux
+.lia.cache
+.nia.cache
+Makefile.coq
+Makefile.coq.conf
+*.cmt
+*.cmti
+*.cmi
+*.cmt
+*.cmx
+*.d
+*.o
+*.a
+*.cmx
+*.cmxa
+*.cmxs

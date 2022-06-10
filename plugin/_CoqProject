@@ -1,0 +1,13 @@
+-R theories egg
+-I src
+
+theories/Data.v
+theories/Loader.v
+theories/test.v
+
+src/test_tactic.ml
+src/test_tactic.mli
+src/construction_game.ml
+src/construction_game.mli
+src/g_egg.mlg
+src/egg_plugin.mlpack

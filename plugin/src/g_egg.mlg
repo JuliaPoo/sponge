@@ -32,6 +32,11 @@ TACTIC EXTEND collapse_hyps
   { Test_tactic.pack_tactic i }
 END
 
+TACTIC EXTEND egg_simpl_goal
+| [ "egg_simpl_goal" ] ->
+  { Test_tactic.egg_simpl_goal () }
+END
+
 (* More advanced examples, where automatic proof happens but
    no tactic is being called explicitly.  The first one uses
    type classes. *)

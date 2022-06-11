@@ -4,6 +4,7 @@
 theories/Data.v
 theories/Loader.v
 theories/test.v
+theories/WordSideconds.v
 
 src/test_tactic.ml
 src/test_tactic.mli

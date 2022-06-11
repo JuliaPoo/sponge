@@ -15,10 +15,10 @@ let c_one sigma =
 (* In the general case, global references may refer to universe polymorphic
    objects, and their universe has to be made afresh when creating an instance. *)
   let gr_S =
-    find_reference "Egg" ["Coq"; "Init"; "Datatypes"] "S" in
+    find_reference "egg" ["Coq"; "Init"; "Datatypes"] "S" in
 (* the long name of "S" was found with the command "About S." *)
   let gr_O =
-    find_reference "Egg" ["Coq"; "Init"; "Datatypes"] "O" in
+    find_reference "egg" ["Coq"; "Init"; "Datatypes"] "O" in
   let sigma, c_O = Evd.fresh_global (Global.env ()) sigma gr_O in
   let sigma, c_S = Evd.fresh_global (Global.env ()) sigma gr_S in
 (* Here is the construction of a new term by applying functions to argument. *)
@@ -66,43 +66,43 @@ let example_sort_app_lambda () =
 
 
 let c_S sigma =
-  let gr = find_reference "Egg" ["Coq"; "Init"; "Datatypes"] "S" in
+  let gr = find_reference "egg" ["Coq"; "Init"; "Datatypes"] "S" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_O sigma =
-  let gr = find_reference "Egg" ["Coq"; "Init"; "Datatypes"] "O" in
+  let gr = find_reference "egg" ["Coq"; "Init"; "Datatypes"] "O" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_E sigma =
-  let gr = find_reference "Egg" ["Egg"; "Data"] "EvenNat" in
+  let gr = find_reference "egg" ["egg"; "Data"] "EvenNat" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_D sigma =
-  let gr = find_reference "Egg" ["Egg"; "Data"] "tuto_div2" in
+  let gr = find_reference "egg" ["egg"; "Data"] "tuto_div2" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_Q sigma =
-  let gr = find_reference "Egg" ["Coq"; "Init"; "Logic"] "eq" in
+  let gr = find_reference "egg" ["Coq"; "Init"; "Logic"] "eq" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_R sigma =
-  let gr = find_reference "Egg" ["Coq"; "Init"; "Logic"] "eq_refl" in
+  let gr = find_reference "egg" ["Coq"; "Init"; "Logic"] "eq_refl" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_N sigma =
-  let gr = find_reference "Egg" ["Coq"; "Init"; "Datatypes"] "nat" in
+  let gr = find_reference "egg" ["Coq"; "Init"; "Datatypes"] "nat" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_C sigma =
-  let gr = find_reference "Egg" ["Egg"; "Data"] "C" in
+  let gr = find_reference "egg" ["egg"; "Data"] "C" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_F sigma =
-  let gr = find_reference "Egg" ["Egg"; "Data"] "S_ev" in
+  let gr = find_reference "egg" ["egg"; "Data"] "S_ev" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 let c_P sigma =
-  let gr = find_reference "Egg" ["Egg"; "Data"] "s_half_proof" in
+  let gr = find_reference "egg" ["egg"; "Data"] "s_half_proof" in
   Evd.fresh_global (Global.env ()) sigma gr
 
 (* If c_S was universe polymorphic, we should have created a new constant

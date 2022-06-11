@@ -141,3 +141,150 @@ let pack_tactic i =
           (tclTHEN (Tactics.rename_hyp [i, h_hyps_id])
              (Tactics.move_hyp h_hyps_id Logic.MoveLast))
     end
+
+let binder_name_to_string b =
+  let open Context in
+  Pp.string_of_ppcmds (Names.Name.print b.binder_name)
+
+exception NotACoqNumber
+
+let positive_to_int sigma e =
+  let open Names in
+  let xI = Coqlib.lib_ref "num.pos.xI" in
+  let xO = Coqlib.lib_ref "num.pos.xO" in
+  let xH = Coqlib.lib_ref "num.pos.xH" in
+  let rec recf p =
+    match EConstr.kind sigma p with
+    | Constr.Construct (ctor, univs) ->
+       if GlobRef.equal (GlobRef.ConstructRef ctor) xH then 1 else raise NotACoqNumber
+    | Constr.App (f, args) ->
+       let digit = match EConstr.kind sigma f with
+         | Constr.Construct (ctor, univs) ->
+            if GlobRef.equal (GlobRef.ConstructRef ctor) xI then 1 else
+              if GlobRef.equal (GlobRef.ConstructRef ctor) xO then 0 else
+                raise NotACoqNumber
+         | _ -> raise NotACoqNumber in
+       let rest = match args with
+         | [| a |] -> recf a
+         | _ -> raise NotACoqNumber in
+       rest * 2 + digit (* TODO this might overflow, use bigints or fail? *)
+    | _ -> raise NotACoqNumber in
+  recf e
+
+let z_to_int sigma e =
+  let open Names in
+  let z0 = Coqlib.lib_ref "num.Z.Z0" in
+  let zpos = Coqlib.lib_ref "num.Z.Zpos" in
+  let zneg = Coqlib.lib_ref "num.Z.Zneg" in
+  match EConstr.kind sigma e with
+  | Constr.Construct (ctor, univs) ->
+     if GlobRef.equal (GlobRef.ConstructRef ctor) z0 then 0 else raise NotACoqNumber
+  | Constr.App (f, args) -> begin
+     let sign = match EConstr.kind sigma f with
+       | Constr.Construct (ctor, univs) ->
+          if GlobRef.equal (GlobRef.ConstructRef ctor) zpos then 1 else
+            if GlobRef.equal (GlobRef.ConstructRef ctor) zneg then -1 else
+              raise NotACoqNumber
+       | _ -> raise NotACoqNumber in
+     match args with
+     | [| a |] -> sign * positive_to_int sigma a
+     | _ -> raise NotACoqNumber
+    end
+  | _ -> raise NotACoqNumber
+
+exception Unsupported
+
+let lookup_name nameEnv index =
+  List.nth nameEnv (index - 1)
+
+let const_to_str c =
+  let open Names in
+  let s = Constant.to_string c in (* TODO: "not to be used for user-facing messages"
+    according to names.mli, but what to use instead? *)
+  Str.global_replace (Str.regexp "\\.") "_DOT_" s
+
+let ind_to_str i =
+  let open Names in
+  let (n, mutInd_index) = i in
+  if mutInd_index != 0 then
+    raise (Invalid_argument "mutual inductives are not supported yet")
+  else
+    let u = MutInd.user n in
+    let s = KerName.to_string u in (* TODO: "not to be used for user-facing messages"
+                                      according to names.mli, but what to use instead? *)
+    Str.global_replace (Str.regexp "\\.") "_DOT_" s
+
+let eggify_thm sigma term =
+  let rec process_expr nameEnv e =
+    try Stdlib.string_of_int (z_to_int sigma e)
+    with NotACoqNumber ->
+          match EConstr.kind sigma e with
+          | Constr.App (f, args) -> "(" ^ process_expr nameEnv f ^ " " ^
+            String.concat " " (List.map (process_expr nameEnv) (Array.to_list args)) ^ ")"
+          | Constr.Rel i -> "?" ^ lookup_name nameEnv i
+          | Constr.Var id -> Names.Id.to_string id
+          | Constr.Ind (i, univs) -> ind_to_str i
+          | Constr.Const (c, univs) -> const_to_str c
+          | Constr.Construct (ctor, univs) -> (* TODO support *) raise Unsupported
+          | _ -> raise Unsupported in
+
+  let process_equality nameEnv t =
+    match EConstr.kind sigma t with
+    | Constr.App (e, args) -> begin
+       match args with
+       | [| tp; lhs; rhs |] -> begin
+           match EConstr.kind sigma e with
+           | Constr.Ind (i, univs) ->
+              let open Names in
+              let open Coqlib in
+              if GlobRef.equal (Coqlib.build_coq_eq_data ()).eq (GlobRef.IndRef i)
+              then
+                let op = if List.length nameEnv == 0 then " <=> " else " => " in
+                let l = process_expr nameEnv lhs in
+                let r = process_expr nameEnv rhs in
+                "\"" ^ l ^ "\"" ^ op ^ "\"" ^ r ^ "\""
+              else raise Unsupported
+           | _ -> raise Unsupported
+         end
+       | _ -> raise Unsupported
+      end
+    | _ -> raise Unsupported in
+
+  let rec process_impls nameEnv t =
+    match EConstr.kind sigma t with
+    | Constr.Prod (name, tp, body) ->
+       if EConstr.Vars.noccurn sigma 1 body then
+         process_equality nameEnv tp ^ "--->" ^ process_impls ("" :: nameEnv) body
+       else raise Unsupported (* foralls after impls are not supported *)
+    | _ -> process_equality nameEnv t in
+
+  let rec process_foralls nameEnv t =
+    match EConstr.kind sigma t with
+    | Constr.Prod (b, tp, body) ->
+       if EConstr.Vars.noccurn sigma 1 body then
+         process_impls nameEnv t
+       else
+         process_foralls (binder_name_to_string b :: nameEnv) body
+    | _ -> process_equality nameEnv t in
+
+  process_foralls [] term
+
+let egg_simpl_goal () =
+  Goal.enter begin fun gl ->
+    let open Context in
+    let open Named.Declaration in
+    let sigma = Tacmach.project gl in
+    let hyps = Environ.named_context (Goal.env gl) in
+    List.iter (function
+        | LocalAssum (id, t) -> begin
+           let name = Names.Id.to_string id.binder_name in
+           try
+             let stmt = eggify_thm sigma (EConstr.of_constr t) in
+             Printf.printf "rewrite!(\"%s\"; %s),\n" name stmt
+           with
+             Unsupported -> ()
+          end
+        | LocalDef (id, c, t) -> ())
+      (List.rev hyps);
+    Proofview.tclUNIT ()
+    end

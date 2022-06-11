@@ -15,3 +15,4 @@ Makefile.coq.conf
 *.cmx
 *.cmxa
 *.cmxs
+src/g_egg.ml

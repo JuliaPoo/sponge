@@ -6396,86 +6396,6 @@ Module PropLemmas.
   Lemma eq_eq_True: forall (A: Type) (a: A), (a = a) = True. Proof. propintu. Qed.
 End PropLemmas.
 
-
-Section WithLib.
-  Context (word: Type)
-          (ZToWord: Z -> word)
-          (unsigned: word -> Z)
-          (wsub: word -> word -> word)
-          (wadd: word -> word -> word)
-          (wopp: word -> word).
-
-  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
-          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-          (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
-
-  (* Preprocessing: *)
-  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
-
-  (* With sideconditions: *)
-  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
-  Context (mem: Type).
-  Definition mem_pred := mem -> Prop.
-  Context (word_array: word -> list word -> mem_pred)
-          (sep: mem_pred -> mem_pred -> mem -> Prop).
-
-  Context (sep_comm: forall P Q: mem_pred, forall m,  sep P Q m = sep Q P m).
-
-  Ltac pose_list_lemmas :=
-    pose proof (@List.firstn_cons word) as firstn_cons;
-    pose proof (@List.skipn_cons word) as skipn_cons;
-    pose proof (@List.app_comm_cons word) as app_cons;
-    pose proof (@List.firstn_O word) as firstn_O;
-    pose proof (@List.skipn_O word) as skipn_O;
-    pose proof (@List.app_nil_l word) as app_nil_l;
-    pose proof (@List.app_nil_r word) as app_nil_r.
-
-  Ltac pose_prop_lemmas :=
-    pose proof PropLemmas.and_True_l as and_True_l;
-    pose proof PropLemmas.and_True_r as and_True_r;
-    pose proof PropLemmas.eq_eq_True as eq_eq_True.
-
-  Definition lipstick {A:Type} {a:A} := a.
-  Axiom magic: False.
-(* 
-Lemma rew_zoom_fw{T: Type}{lhs rhs: T}:
-  lhs = rhs ->
-  forall P : T -> Prop, P lhs -> P rhs.
-Proof.
-  intros. subst. assumption.
-Qed.
-
-Lemma rew_zoom_bw{T: Type}{lhs rhs: T}:
-  lhs = rhs ->
-  forall P : T -> Type, P rhs -> P lhs.
-Proof.
-  intros. subst. assumption.
-Qed. *)
-Lemma rew_zoom_fw{T: Type} {lhs rhs : T}:
-  lhs = rhs ->
-  forall P : T -> Prop, P lhs -> P rhs.
-Proof.
-  intros. subst. assumption.
-Qed.
-
-Lemma rew_zoom_bw{T: Type}{rhs lhs: T}:
-  lhs = rhs ->
-  forall P : T -> Type, P rhs -> P lhs.
-Proof.
-  intros. subst. assumption.
-Qed.
-
-
-Lemma helper{T: Type}{lhs rhs: T} {A :Type} {a:A}:
-  lhs = rhs ->
-  forall P : T -> A, P rhs = a -> P lhs = a.
-Proof.
-  intros. subst. reflexivity. 
-Qed.
-
-
 Definition qmid {A:Type} (i : A) := i.
 Definition hide_qt {A:Type} (i : A) := i.
 Definition hide_goal {A:Type} (i : A) := i.
@@ -6508,7 +6428,7 @@ Notation " '?FILLNAME' '=' a '=' b ',' " := (a = b)
   a custom EggNoEq at level 200,
   b custom EggNoEq at level 200,
    only printing).
-Notation " ?FILLNAME = a "" '=>' "" b ""  " := (a = b) 
+Notation " '?FILLNAME' '=' a "" '=>' "" b ""  " := (a = b) 
   (in custom EggPost at level 1,
   a custom EggNoEq at level 200,
   b custom EggNoEq at level 200,
@@ -6516,8 +6436,8 @@ Notation " ?FILLNAME = a "" '=>' "" b ""  " := (a = b)
 
 (* Notation "a" := (a) (in custom Egg at level 0, a constr, only printing). *)
 
-Notation " x y z " := (x -> (y -> z)) (in custom Egg at level 180, x custom EggPrecond at level 200, y custom EggPrecond at level 200, z custom Egg at level 200, only printing). 
-Notation " x y " := (x -> y) (in custom Egg at level 180, x custom EggPrecond at level 200, y custom EggPost at level 180, only printing). 
+Notation " x .. y z " := (x -> .. (y -> z) ..) (in custom Egg at level 180, x custom EggPrecond at level 200, y custom EggPrecond at level 200, z custom EggPost at level 180, only printing). 
+(* Notation " x y " := (x -> y) (in custom Egg at level 179, x custom EggPrecond at level 200, y custom EggPost at level 180, only printing).  *)
 Notation "'/*' x .. y '*/' bdy" := (hide_qt (forall x, .. (forall y,  bdy) ..)) 
       (at level 200, x binder, y binder, bdy custom Egg at level 200, right associativity, only printing). 
 
@@ -6530,7 +6450,7 @@ Notation " a "" '=>' "" b """ := (a = b)
 Notation "a" := (a) (in custom Egg at level 0, a constr, only printing).
 
 Notation "bdy" := (hide_qt bdy) 
-      (at level 180, bdy custom EggIff at level 200, right associativity, only printing).
+      (at level 180, bdy custom Egg at level 200, right associativity, only printing).
 Notation """ a "" '<=>' "" b """ := (a = b) 
   (in custom EggIff at level 1,
   a custom EggNoEq at level 200,
@@ -6627,14 +6547,129 @@ Ltac eggify H :=
     clear H
   end.
   (* Arguments Z.to_nat : clear scopes. *)
+Section WithLib.
+  Context (word: Type)
+          (ZToWord: Z -> word)
+          (unsigned: word -> Z)
+          (wsub: word -> word -> word)
+          (wadd: word -> word -> word)
+          (wopp: word -> word).
+
+  Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
+          (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
+          (wadd_comm: forall a b, wadd a b = wadd b a)
+          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
+
+  (* Preprocessing: *)
+  Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
+
+  (* With sideconditions: *)
+  Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+  Context (mem: Type).
+  Definition mem_pred := mem -> Prop.
+  Context (word_array: word -> list word -> mem_pred)
+          (sep: mem_pred -> mem_pred -> mem -> Prop).
+
+  Context (sep_comm: forall P Q: mem_pred, forall m,  sep P Q m = sep Q P m).
+
+  Ltac pose_list_lemmas :=
+    pose proof (@List.firstn_cons word) as firstn_cons;
+    pose proof (@List.skipn_cons word) as skipn_cons;
+    pose proof (@List.app_comm_cons word) as app_cons;
+    pose proof (@List.firstn_O word) as firstn_O;
+    pose proof (@List.skipn_O word) as skipn_O;
+    pose proof (@List.app_nil_l word) as app_nil_l;
+    pose proof (@List.app_nil_r word) as app_nil_r.
+
+  Ltac pose_prop_lemmas :=
+    pose proof PropLemmas.and_True_l as and_True_l;
+    pose proof PropLemmas.and_True_r as and_True_r;
+    pose proof PropLemmas.eq_eq_True as eq_eq_True.
+
+  Definition lipstick {A:Type} {a:A} := a.
+  Axiom magic: False.
+(* 
+Lemma rew_zoom_fw{T: Type}{lhs rhs: T}:
+  lhs = rhs ->
+  forall P : T -> Prop, P lhs -> P rhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+Lemma rew_zoom_bw{T: Type}{lhs rhs: T}:
+  lhs = rhs ->
+  forall P : T -> Type, P rhs -> P lhs.
+Proof.
+  intros. subst. assumption.
+Qed. *)
+Lemma rew_zoom_fw{T: Type} {lhs rhs : T}:
+  lhs = rhs ->
+  forall P : T -> Prop, P lhs -> P rhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+Lemma rew_zoom_bw{T: Type}{rhs lhs: T}:
+  lhs = rhs ->
+  forall P : T -> Type, P rhs -> P lhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+
+Lemma helper{T: Type}{lhs rhs: T} {A :Type} {a:A}:
+  lhs = rhs ->
+  forall P : T -> A, P rhs = a -> P lhs = a.
+Proof.
+  intros. subst. reflexivity. 
+Qed.
+
+
   Arguments cons [_].
   Arguments nil : clear implicits.
   Arguments Some : clear implicits.
   Definition mydiv := Z.div.
+  Definition myabs := Z.abs.
+  Definition mylt := Z.lt.
   Definition mynatdiv := Nat.div.
   Definition myapp := List.app.
   Definition MySuc := S.
   Definition MyO := O.
+
+Lemma invert_eq_True: forall (P: Prop), P = True -> P.
+Proof. intros; subst; auto. Qed.
+Lemma prove_eq_True: forall (P: Prop), P -> P = True.
+Proof.
+  intros. apply propositional_extensionality. split; auto.
+Qed.
+Lemma invert_eq_False: forall (P: Prop), P = False -> ~ P.
+Proof. intros. intro C. subst. assumption. Qed.
+Lemma prove_eq_False: forall (P: Prop), ~ P -> P = False.
+Proof.
+  intros. apply propositional_extensionality. split; intuition idtac.
+Qed.
+
+Lemma eq_eq_sym: forall {A: Type} (x y: A), (x = y) = (y = x).
+Proof.
+  intros. apply propositional_extensionality. split; intros; congruence.
+Qed.
+
+Ltac deTrue :=
+  repeat match goal with
+         | H: _ = True |- _ => eapply invert_eq_True in H
+         | H: _ = False |- _ => eapply invert_eq_False in H
+         end;
+  try apply prove_eq_True;
+  try apply prove_eq_False.
+Lemma eq_True_holds: forall (P: Prop), P = True <-> P.
+Proof.
+  split; intros; subst; auto.
+  apply propositional_extensionality. split; auto.
+Qed.
+
+
+
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
         (f g: word -> word) (b: word)
@@ -6703,44 +6738,82 @@ Ltac eggify H :=
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
     change Z.div with mydiv in *.
+
+    change Z.lt with mylt in *.
     change Nat.div with mynatdiv in *.
     change S with MySuc in *.
     change O with MyO in *.
 
-      eggify wadd_comm.
-      eggify hyp_missing.
-      eggify wadd_0_l.
-      eggify wadd_0_r.
-      eggify and_True_l.
-      eggify firstn_cons.
-      eggify and_True_r.
-      eggify wadd_assoc.
-      eggify eq_eq_True.
-      eggify A1.
-      eggify C1.
-      eggify app_nil_l.
-      eggify app_nil_r.
-      eggify skipn_cons.
-      eggify app_cons.
-      eggify wadd_opp.
-      eggify H.
-      eggify firstn_O.
-      eggify skipn_O.
-      eggify our_wadd_assoc.
-      eggify our_app_cons.
-      eggify sep_comm.
+    eggify wadd_comm.
+    eggify hyp_missing.
+    eggify wadd_0_l.
+    eggify wadd_0_r.
+    eggify and_True_l.
+    eggify firstn_cons.
+    eggify and_True_r.
+    eggify wadd_assoc.
+    eggify eq_eq_True.
+    eggify A1.
+    eggify C1.
+    eggify app_nil_l.
+    eggify app_nil_r.
+    eggify skipn_cons.
+    eggify app_cons.
+    eggify wadd_opp.
+    eggify H.
+    eggify firstn_O.
+    eggify skipn_O.
+    eggify our_wadd_assoc.
+    eggify our_app_cons.
+    eggify sep_comm.
+
+
+      assert (forall (x y z:Z ), x < y = True -> y < z = True -> True = (x < z)) as trans_lt.
+      { intros; deTrue.
+      epose proof Z.lt_trans.
+      specialize (H1) with (1:= H).
+      specialize (H1) with (1:= H0).
+      eapply propositional_extensionality; split;eauto.
+      }
       assert (forall {A :Type} (x y :A), Some _ x = Some _ y -> x = y).
       { intros. inversion H. reflexivity. }
-      assert (1 = 1 -> 1 = 1) by trivial.
-      -
-     eggify H. 
-     eggify H0. 
+
+     (* eggify H0.  *)
+     assert (Some _ (unsigned b) = Some _ 3) by admit.
+     assert (2 < 3  = True) by admit.
+     assert (0 < 2 = True) by admit.
+     assert (forall (x : Z), 0 < x = True -> (Z.abs x) = x) by admit.
+     assert (Z.abs (unsigned b) = 3).
+     {
       match goal with 
       | [|- ?g] => assert (hide_goal g)
       end.
+
       Close Scope list.
       Close Scope list_scope.
       Undelimit Scope list_scope.
+      {
+        change Z.lt with mylt in *.
+        change Z.abs with myabs in *.
+        eggify H.
+        eggify trans_lt.
+        eggify H0.
+        eggify H1.
+        eggify H2.
+        eggify H3.
+        eapply (@rew_zoom_bw _ 3 _  (EGGTHSSSSOH _ _ _ _) (fun hole => (@eq Z (@myabs hole) 3)));
+        eapply (@rew_zoom_bw _ 3 _  (EGGTHSSOH3 _ _) (fun hole => (@eq Z hole 3)));
+        idtac.
+        constructor.
+        Unshelve.
+        all: eauto.
+   
+      }
+      exact H4.
+     }
+  match goal with 
+      | [|- ?g] => assert (hide_goal g)
+      end.
       {
 
         eapply (@rew_zoom_fw _ (@wadd a b) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@and (@eq word (@f hole) (@g b)) (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) (@f (@wadd a b)))))));
@@ -6800,5 +6873,7 @@ Ltac eggify H :=
         idtac.
         constructor.
       }
-   exact H.
-   Time Qed.
+      exact H5.
+      Unshelve.
+      Admitted.
+     End WithLib. 

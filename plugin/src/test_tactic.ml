@@ -197,37 +197,55 @@ exception Unsupported
 let lookup_name nameEnv index =
   List.nth nameEnv (index - 1)
 
-let const_to_str c =
-  let open Names in
-  let s = Constant.to_string c in (* TODO: "not to be used for user-facing messages"
-    according to names.mli, but what to use instead? *)
-  Str.global_replace (Str.regexp "\\.") "_DOT_" s
+let dedot s =
+  (* to turn into valid rust identifier *)
+  Str.global_replace (Str.regexp "\\.") "DOT" s
 
-let ind_to_str i =
-  let open Names in
-  let (n, mutInd_index) = i in
-  if mutInd_index != 0 then
-    raise (Invalid_argument "mutual inductives are not supported yet")
-  else
-    let u = MutInd.user n in
-    let s = KerName.to_string u in (* TODO: "not to be used for user-facing messages"
-                                      according to names.mli, but what to use instead? *)
-    Str.global_replace (Str.regexp "\\.") "_DOT_" s
+let print_lang arities chan =
+  Printf.fprintf chan "define_language! {\n";
+  Printf.fprintf chan "  pub enum CoqSimpleLanguage {\n";
+  Printf.fprintf chan "    Num(i32),\n";
+  Hashtbl.iter
+    (fun f n -> Printf.fprintf chan "    \"%s\" = %s([Id; %d]),\n" f (dedot f) n)
+    arities;
+  Printf.fprintf chan "    Symbol(Symbol)\n";
+  Printf.fprintf chan "  }\n";
+  Printf.fprintf chan "}\n\n"
 
-let eggify_thm sigma term =
-  let rec process_expr nameEnv e =
-    try Stdlib.string_of_int (z_to_int sigma e)
-    with NotACoqNumber ->
-          match EConstr.kind sigma e with
-          | Constr.App (f, args) -> "(" ^ process_expr nameEnv f ^ " " ^
-            String.concat " " (List.map (process_expr nameEnv) (Array.to_list args)) ^ ")"
-          | Constr.Rel i -> "?" ^ lookup_name nameEnv i
-          | Constr.Var id -> Names.Id.to_string id
-          | Constr.Ind (i, univs) -> ind_to_str i
-          | Constr.Const (c, univs) -> const_to_str c
-          | Constr.Construct (ctor, univs) -> (* TODO support *) raise Unsupported
-          | _ -> raise Unsupported in
+let register_arity arities f n =
+  match Hashtbl.find_opt arities f with
+  | Some m -> if n == m then () else failwith (f ^ " appears with different arities")
+  | None -> Hashtbl.add arities f n
 
+let rec process_expr env sigma arities nameEnv e =
+  let ind_to_str i = Pp.string_of_ppcmds (Printer.pr_inductive env i) in
+  let const_to_str c = Pp.string_of_ppcmds (Printer.pr_constant env c) in
+  let sort_to_str s = Pp.string_of_ppcmds
+                        (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
+  let ctor_to_str c = Pp.string_of_ppcmds (Printer.pr_constructor env c) in
+  try Stdlib.string_of_int (z_to_int sigma e)
+  with NotACoqNumber ->
+        match EConstr.kind sigma e with
+        | Constr.App (f, args) -> begin
+            (let arity = Array.length args in
+             match EConstr.kind sigma f with
+             | Constr.Ind (i, univs) -> register_arity arities (ind_to_str i) arity
+             | Constr.Const (c, univs) -> register_arity arities (const_to_str c) arity
+             | Constr.Var id -> register_arity arities (Names.Id.to_string id) arity
+             | _ -> ());
+            "(" ^ process_expr env sigma arities nameEnv f ^ " " ^
+              String.concat " " (List.map (process_expr env sigma arities nameEnv)
+                                   (Array.to_list args)) ^ ")"
+          end
+        | Constr.Rel i -> "?" ^ lookup_name nameEnv i
+        | Constr.Var id -> Names.Id.to_string id
+        | Constr.Ind (i, univs) -> ind_to_str i
+        | Constr.Const (c, univs) -> const_to_str c
+        | Constr.Construct (ctor, univs) -> ctor_to_str ctor
+        | Constr.Sort s -> sort_to_str s
+        | _ -> raise Unsupported
+
+let eggify_thm env sigma arities term =
   let process_equality nameEnv t =
     match EConstr.kind sigma t with
     | Constr.App (e, args) -> begin
@@ -240,8 +258,8 @@ let eggify_thm sigma term =
               if GlobRef.equal (Coqlib.build_coq_eq_data ()).eq (GlobRef.IndRef i)
               then
                 let op = if List.length nameEnv == 0 then " <=> " else " => " in
-                let l = process_expr nameEnv lhs in
-                let r = process_expr nameEnv rhs in
+                let l = process_expr env sigma arities nameEnv lhs in
+                let r = process_expr env sigma arities nameEnv rhs in
                 "\"" ^ l ^ "\"" ^ op ^ "\"" ^ r ^ "\""
               else raise Unsupported
            | _ -> raise Unsupported
@@ -275,16 +293,36 @@ let egg_simpl_goal () =
     let open Named.Declaration in
     let sigma = Tacmach.project gl in
     let hyps = Environ.named_context (Goal.env gl) in
+    Printf.printf "\n#![allow(missing_docs,non_camel_case_types)]\n";
+    Printf.printf "use crate ::*;\n";
+    let arities = Hashtbl.create 20 in
+    let rules_str = ref "" in
     List.iter (function
         | LocalAssum (id, t) -> begin
            let name = Names.Id.to_string id.binder_name in
            try
-             let stmt = eggify_thm sigma (EConstr.of_constr t) in
-             Printf.printf "rewrite!(\"%s\"; %s),\n" name stmt
+             let stmt = eggify_thm (Goal.env gl) sigma arities (EConstr.of_constr t) in
+             (*Printf.printf "rewrite!(\"%s\"; %s),\n" name stmt *)
+             rules_str := !rules_str ^ "    rewrite!(\"" ^ name ^ "\"; " ^ stmt ^ "\n";
            with
              Unsupported -> ()
           end
         | LocalDef (id, c, t) -> ())
       (List.rev hyps);
+
+    let g = process_expr (Goal.env gl) sigma arities [] (Goal.concl gl) in
+
+    print_lang arities stdout;
+
+    Printf.printf "pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {\n";
+    Printf.printf "  let mut v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
+    Printf.printf "%s" !rules_str;
+    Printf.printf "  )].concat()); v\n}\n\n";
+
+    Printf.printf "pub fn run_simplifier(f : fn(&str) -> ()) {\n";
+    Printf.printf "  let st : &str = \"%s\";\n" g;
+    Printf.printf "  f(&st);\n";
+    Printf.printf "}\n\n";
+
     Proofview.tclUNIT ()
     end

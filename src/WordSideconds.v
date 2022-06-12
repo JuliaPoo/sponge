@@ -19,7 +19,7 @@ Module Z.
   Lemma div_mul_lt: forall x d1 d2,
       (0 < x = True)->
       (0 < d1 = True) ->
-      (d1 < d2 = True)->
+      (d1 < d2 = True) ->
       (x / d2 * d1 < x = True).
   Proof. intros. Z.to_euclidean_division_equations.
    assert (0 < x). rewrite H; eauto.

@@ -6383,7 +6383,7 @@ End Temp.
 
 Local Open Scope sponge_scope.
 
-Require Coq.Lists.List. Import List.ListNotations.
+Require Coq.Lists.List. 
 Require Import Coq.ZArith.ZArith. Local Open Scope Z_scope.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.PropExtensionality.
@@ -6416,12 +6416,12 @@ Section WithLib.
 
   (* With sideconditions: *)
   Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
+  Context (mem: Type).
+  Definition mem_pred := mem -> Prop.
+  Context (word_array: word -> list word -> mem_pred)
+          (sep: mem_pred -> mem_pred -> mem -> Prop).
 
-  Context (mem: Type)
-          (word_array: word -> list word -> mem -> Prop)
-          (sep: (mem -> Prop) -> (mem -> Prop) -> (mem -> Prop)).
-
-  Context (sep_comm: forall P Q: mem -> Prop, sep P Q = sep Q P).
+  Context (sep_comm: forall P Q: mem_pred, forall m,  sep P Q m = sep Q P m).
 
   Ltac pose_list_lemmas :=
     pose proof (@List.firstn_cons word) as firstn_cons;
@@ -6439,7 +6439,202 @@ Section WithLib.
 
   Definition lipstick {A:Type} {a:A} := a.
   Axiom magic: False.
+(* 
+Lemma rew_zoom_fw{T: Type}{lhs rhs: T}:
+  lhs = rhs ->
+  forall P : T -> Prop, P lhs -> P rhs.
+Proof.
+  intros. subst. assumption.
+Qed.
 
+Lemma rew_zoom_bw{T: Type}{lhs rhs: T}:
+  lhs = rhs ->
+  forall P : T -> Type, P rhs -> P lhs.
+Proof.
+  intros. subst. assumption.
+Qed. *)
+Lemma rew_zoom_fw{T: Type} {lhs rhs : T}:
+  lhs = rhs ->
+  forall P : T -> Prop, P lhs -> P rhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+Lemma rew_zoom_bw{T: Type}{rhs lhs: T}:
+  lhs = rhs ->
+  forall P : T -> Type, P rhs -> P lhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+
+Lemma helper{T: Type}{lhs rhs: T} {A :Type} {a:A}:
+  lhs = rhs ->
+  forall P : T -> A, P rhs = a -> P lhs = a.
+Proof.
+  intros. subst. reflexivity. 
+Qed.
+
+
+Definition qmid {A:Type} (i : A) := i.
+Definition hide_qt {A:Type} (i : A) := i.
+Definition hide_goal {A:Type} (i : A) := i.
+
+Declare Custom Entry Egg.
+Declare Custom Entry EggIff.
+Declare Custom Entry EggGoal.
+Declare Custom Entry EggNoEq.
+Declare Custom Entry EggPrecond.
+Declare Custom Entry EggPost.
+
+Notation "'(@' f  a1 .. an ')'" := (.. (f a1) .. an) (in custom EggNoEq at level 0, f at level 0, a1 at level 0, an at level 0, left associativity, only printing).
+Notation "'?' x" := (qmid x) (in custom EggNoEq at level 0, x at level 0, only printing, format "'?' x"). 
+Notation "a" := (a) (in custom EggNoEq at level 0, a constr, only printing).
+
+Notation "'(@and'  a b ')'" := (a /\ b) (in custom EggNoEq at level 200,  a custom EggGoal at level 200 , b custom EggGoal at level 200 , only printing).
+Notation "'(@eq'  a b c ')'" := (@eq a b c) 
+  (in custom EggNoEq at level 1,
+  a custom EggNoEq,
+  b custom EggNoEq,
+  c custom EggNoEq,
+   only printing).
+
+(* Notation "'(' 'div' a b ')'" := (Z.div a b) (in custom EggNoEq at level 200,  a custom EggNoEq at level 200 , b custom EggNoEq at level 200 , only printing). *)
+
+Notation "'(@' f  a1 .. an ')'" := (.. (f a1) .. an) (in custom Egg at level 0, f at level 0, a1 at level 0, an at level 0, left associativity, only printing).
+Notation "'?' x" := (qmid x) (in custom Egg at level 0, x at level 0, only printing, format "'?' x"). 
+Notation " '?FILLNAME' '=' a '=' b ',' " := (a = b) 
+  (in custom EggPrecond at level 1,
+  a custom EggNoEq at level 200,
+  b custom EggNoEq at level 200,
+   only printing).
+Notation " ?FILLNAME = a "" '=>' "" b ""  " := (a = b) 
+  (in custom EggPost at level 1,
+  a custom EggNoEq at level 200,
+  b custom EggNoEq at level 200,
+   only printing).
+
+(* Notation "a" := (a) (in custom Egg at level 0, a constr, only printing). *)
+
+Notation " x y z " := (x -> (y -> z)) (in custom Egg at level 180, x custom EggPrecond at level 200, y custom EggPrecond at level 200, z custom Egg at level 200, only printing). 
+Notation " x y " := (x -> y) (in custom Egg at level 180, x custom EggPrecond at level 200, y custom EggPost at level 180, only printing). 
+Notation "'/*' x .. y '*/' bdy" := (hide_qt (forall x, .. (forall y,  bdy) ..)) 
+      (at level 200, x binder, y binder, bdy custom Egg at level 200, right associativity, only printing). 
+
+Notation " a "" '=>' "" b """ := (a = b) 
+  (in custom Egg at level 1,
+  a custom EggNoEq at level 200,
+  b custom EggNoEq at level 200,
+  format " a "" '=>' "" b """,
+   only printing).
+Notation "a" := (a) (in custom Egg at level 0, a constr, only printing).
+
+Notation "bdy" := (hide_qt bdy) 
+      (at level 180, bdy custom EggIff at level 200, right associativity, only printing).
+Notation """ a "" '<=>' "" b """ := (a = b) 
+  (in custom EggIff at level 1,
+  a custom EggNoEq at level 200,
+  b custom EggNoEq at level 200,
+  format """ a "" '<=>' "" b """,
+  only printing).
+Notation "a" := (a) (in custom EggIff at level 0, a constr, only printing).
+
+Notation "'(@' f  a1 .. an ')'" := (.. (f a1) .. an) (in custom EggGoal at level 0, f at level 0, a1 at level 0, an at level 0, left associativity, only printing).
+Notation "'?' x" := (qmid x) (in custom EggGoal at level 0, x custom EggGoal at level 0, only printing, format "'?' x"). 
+Notation "'<' bdy '>'" := (hide_goal bdy) 
+      (at level 180, bdy custom EggGoal at level 200, right associativity, only printing).
+Notation "a" := (a) (in custom EggGoal at level 0, a constr, only printing).
+Notation "'(@and'  a b ')'" := (a /\ b) (in custom EggGoal at level 200,  a custom EggGoal at level 200 , b custom EggGoal at level 200 , only printing).
+Notation "'(@eq'  a b c ')'" := (@eq a b c) (in custom EggGoal at level 200,  
+                      a custom EggGoal at level 200 ,
+                      b custom EggGoal at level 200 ,
+                      c custom EggGoal at level 200 ,
+                         only printing).
+
+Import List.ListNotations.
+
+Ltac eggify_const cst := 
+  lazymatch type of cst with 
+  | forall x, _ => 
+    let eggifyed_name := fresh x in
+    constr:((forall eggifyed_name, ltac:(let yo := (eggify_const (cst (qmid eggifyed_name))) in exact yo)))
+  | ?a => constr:(a)
+  end.
+
+Ltac get_quantifiers_t' t :=
+  lazymatch t with
+  | ?A -> ?B =>
+  constr:(forall (x: True), ltac:(
+        (* let body' := eval cbv beta in (t x) in *)
+        let r := get_quantifiers_t' B in
+        exact r))
+  (* constr:(True) *)
+  | forall (x: ?T), @?body x =>
+      constr:(forall (x: T), ltac:(
+        let body' := eval cbv beta in (body x) in
+        let r := get_quantifiers_t' body' in
+        exact r))
+  | _ => constr:(True)
+  end.
+
+Ltac count_quantifiers' t :=
+   lazymatch t with
+  | ?tx -> ?a =>
+    let rest := count_quantifiers' a in
+    constr:(S rest)
+    | _ => constr:(O)
+  end.
+
+Ltac count_quantifiers H :=
+  let H := type of H in
+  let t := get_quantifiers_t' H in
+ let __ := match O with | _ => idtac t end in
+  let t := get_quantifiers_t' t in
+
+ let __ := match O with | _ => idtac t end in
+  (* let t := eval simpl in t in *)
+  let t := count_quantifiers' t in
+  t.
+
+
+Ltac number_to_ident n :=
+  match n with 
+  | O => fresh "O"
+  | S ?n => 
+    let rest_name := number_to_ident n in 
+    fresh "S" rest_name 
+  end.
+(* 
+Goal True.
+  let count := count_quantifiers wadd_comm in 
+  idtac count;
+  let bouzin := (number_to_ident count) in idtac bouzin. *)
+
+
+Ltac eggify H :=
+  match type of H with 
+  | forall x, _ => 
+    let count := count_quantifiers H in 
+    let bouzin := (number_to_ident count) in
+    let th_name := fresh "EGGTH" bouzin H in 
+    let ret := (eggify_const H) in
+    idtac ret;
+    assert (hide_qt ret) as th_name by exact H;
+    clear H
+  | ?a => 
+    let th_name := fresh "EGGHYP" H in 
+    assert (hide_qt a) as th_name by exact H;
+    clear H
+  end.
+  (* Arguments Z.to_nat : clear scopes. *)
+  Arguments cons [_].
+  Arguments nil : clear implicits.
+  Arguments Some : clear implicits.
+  Definition mydiv := Z.div.
+  Definition mynatdiv := Nat.div.
+  Definition myapp := List.app.
+  Definition MySuc := S.
+  Definition MyO := O.
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
         (f g: word -> word) (b: word)
@@ -6507,985 +6702,103 @@ Section WithLib.
        TODO how to automate? *)
     pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
 
-    set (simpgoal1 := (f (wadd (wopp a) (wadd b a)) = f b)).
-    assert simpgoal1 as simpgoal1pf. {
-      unfold simpgoal1.
-      rewrite (wadd_comm b a).
-      rewrite (wadd_assoc (wopp a) a b).
-      rewrite (wadd_comm (wopp a) a).
-      rewrite (wadd_opp a).
-      rewrite (wadd_comm (ZToWord 0) b).
-      rewrite (wadd_0_r b).
-      reflexivity.
-    }
-    clear simpgoal1pf.
-
-    assert simpgoal1 as simpgoal1pf. {
-      unfold simpgoal1.
-
-      clear hyp_missing.
-
-    reify_all.
-
-    unpack_tm_cm.
-    pose empty_egraph as sponge.
-    assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-    saturate_with {{ get_goal_reified_hack;
-      wadd_comm;
-      wadd_assoc;
-      wadd_comm;
-      wadd_opp;
-      wadd_comm;
-      wadd_0_r
-    }}.
-    assert_succeeds (idtac; solve [prove_eq_by_sponge]).
-
-    let types_of_constmap :=
-      (let cm_u := eval cbv delta [cm] in cm in
-         ltac_map ltac:(fun d => lazymatch d with
-                                 | mk_dyn _ ?t _ => t
-                                 end) cm_u) in
-    lazymatch goal with
-    | SpongeInv : invariant_egraph ?tm ?cm ?e
-      |- @reified _ _ (mk_reified_qf_equ ?lhs ?rhs) =>
-        let idL := eval vm_compute in (@lookup_term (@EGraphList.nil type) HNil _ lhs e) in
-        idtac idL;
-        lazymatch idL with
-        | Some ?idL =>
-        let r := eval vm_compute in (smallest_rep_aux e FUEL idL (Enodes.PTree.empty _) log_nil) in
-          lazymatch r with
-          | (?o, ?m, ?l) =>
-              idtac o l;
-              lazymatch o with
-              | Some (Some (?u, ?sz)) =>
-                  idtac "minimal size:" sz "term: " u;
-                  let tc := eval vm_compute in (typecheck types_of_constmap EGraphList.nil u) in
-                           lazymatch tc with
-                           | Some (existT _ ?tp ?t) =>
-                            eassert (interp_term tm cm EGraphList.nil HNil t eq_refl = _)
-                           | None => idtac "typecheck failed"
-                           end
-              | _ => idtac "smallest_rep_aux failed"
-              end
-          end
-        | None => idtac "lookup_term failed"
-        end
-    end.
-    { simpl. reflexivity. }
-
-  Time lazymatch goal with
-  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
-      let l := eval vm_compute in (log e) in idtac l
-  end.
-  Time prove_eq_by_sponge.
-    }
-
-     reify_all.
-
-     unpack_tm_cm.
-     pose empty_egraph as sponge.
-     assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-    saturate_with {{ get_goal_reified_hack; hyp_missing; C1; A1; H
-
-    ; wadd_comm; wadd_opp; wadd_0_r
-
-    ; eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-      app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-
-
-    (* ; wadd_comm *)
-
-   ; app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm }}.
-
-  Time lazymatch goal with
-  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
-      let l := eval vm_compute in (log e) in idtac l
-  end.
-  Time prove_eq_by_sponge.
-
-    Time Qed.
-
-  Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
-                               (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
-        (f g: word -> word) (b: word)
-        (HL: List.length vs = 3%nat)
-        (H : sep (word_array a
-          (List.firstn
-             (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-              [w1] ++ List.skipn 2 vs) ++
-           [w2] ++
-           List.skipn
-             (S (Z.to_nat (unsigned (wsub (wadd a (ZToWord 8)) a) / 4)))
-             ((if cond0_0 then [w1_0] else if cond0 then [w2_0] else List.firstn 1 vs) ++
-                [w1] ++ List.skipn 2 vs))) R m),
-        f (wadd b a) = g b /\
-        sep R (word_array a [List.nth 0 vs (ZToWord 0); w1; w2]) m /\
-        f (wadd b a) = f (wadd a b).
-  Proof.
-    intros.
-
-    pose_list_lemmas.
-    pose_prop_lemmas.
-    specialize (eq_eq_True word).
-    assert ( forall a b c : word,
-             wadd (wadd a b) c =
-             wadd a (wadd b c)
-    ) as our_wadd_assoc by intuition eauto.
-    (* clear wadd_assoc. *)
-    assert (forall (x y : list word)
-             (a : word),
-            ((a :: x) ++ y)%list =
-           (a :: x ++ y)%list
-           ) as our_app_cons by intuition eauto.
-    (* clear app_cons. *)
-
-
-    (* Make problems simpler by only considering one combination of the booleans,
-       but it would be nice to treat all of them at once *)
-    replace cond0_0 with false in * by admit.
-    replace cond0 with false in * by admit.
-
-    (* Make problem simpler by not requiring side conditions: since we know the
-       concrete length of vs, we can destruct it, so firstn and skipn lemmas can
-       be on cons without sideconditions rather than on app with side conditions
-       on length *)
-    destruct vs as [|v0 vs]. 1: discriminate HL.
-    destruct vs as [|v1 vs]. 1: discriminate HL.
-    destruct vs as [|v2 vs]. 1: discriminate HL.
-    destruct vs as [|v3 vs]. 2: discriminate HL.
-    clear HL.
-    cbn.
-    (* cbn in H. <-- We don't do this cbn because now that we've done the above
-       destructs, cbn can do much more than it usually would be able to do. *)
-
-    (* Preprocessing *)
-    rewrite wsub_def in *.
-    clear wsub_def.
-    apply PropLemmas.eq_True in H.
-
-    (* Rewrites with sideconditions, currently also part of separate preprocessing: *)
-    pose proof (unsigned_of_Z 8 ltac:(lia)) as A1.
-
-    (* Constant propagation rules, manually chosen to make things work,
-       TODO how to automate? *)
-    pose proof (eq_refl : (Z.to_nat (8 / 4)) = 2%nat) as C1.
-
-(* SMALLER TEST *)
-
-    pose
-      ( (f (wadd b a) = g b /\
-         (* sep R (word_array a [v0; w1; w2]) m /\ *)
-         f (wadd b a) = f (wadd a b))
-      = (f (wadd a b) = g b) ) as test1.
-
-    assert test1 as test1pf. {
-      subst test1.
-      rewrite (wadd_comm a (ZToWord 8)) in H.
-      rewrite (our_wadd_assoc (ZToWord 8) a (wopp a)) in H.
-      rewrite (wadd_opp a) in H.
-      rewrite (wadd_0_r (ZToWord 8)) in H.
-      rewrite A1 in H.
-      rewrite C1 in H.
-      repeat (rewrite ?firstn_cons, ?skipn_cons, ?our_app_cons, ?firstn_O, ?skipn_O,
-               ?app_nil_l, ?app_nil_r in H).
-      rewrite sep_comm in H.
-      rewrite (wadd_comm b a).
-      rewrite eq_eq_True.
-      rewrite and_True_r.
-      reflexivity.
-    }
-    clear test1pf.
-
-    assert test1 as test1pf. {
-      subst test1.
-
-      reify_all.
-
-      unpack_tm_cm.
-      pose empty_egraph as sponge.
-      assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-      saturate_with {{ get_goal_reified_hack; C1; A1; H;
-        eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-   our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc;wadd_comm; wadd_0_r; wadd_0_l
-   ;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-   our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc;wadd_comm; wadd_0_r; wadd_0_l
- ;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-   our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc;wadd_comm; wadd_0_r; wadd_0_l
-       (* ;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-   our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc;wadd_comm; wadd_0_r; wadd_0_l *)
-    }}.
-
-
-  Time lazymatch goal with
-  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
-      let l := eval vm_compute in (log e) in idtac l
-      (* let o182 := eval vm_compute in (PTree.get 182 (id2s e)) in
-      let o134 := eval vm_compute in (PTree.get 182 (id2s e)) in *)
-  end.
-
-  Time prove_eq_by_sponge.
-    }
-
-    pose
-     ( (f (wadd b a) = g b /\
-         sep R (word_array a [v0; w1; w2]) m /\
-         f (wadd b a) = f (wadd a b))
-      = (f (wadd a b) = g b) ) as test2.
-
-    assert test2 as test2pf. {
-      subst test2.
-  rewrite (wadd_comm a (ZToWord 8)) in H.
-      rewrite (our_wadd_assoc (ZToWord 8) a (wopp a)) in H.
-      rewrite (wadd_opp a) in H.
-      rewrite (wadd_0_r (ZToWord 8)) in H.
-      rewrite A1 in H.
-      rewrite C1 in H.
-      repeat (rewrite ?firstn_cons, ?skipn_cons, ?our_app_cons, ?firstn_O, ?skipn_O,
-               ?app_nil_l, ?app_nil_r in H).
-      rewrite sep_comm in H.
-      rewrite (wadd_comm b a).
-      rewrite eq_eq_True.
-      rewrite H.
-      rewrite and_True_r.
-      rewrite and_True_r.
-      reflexivity.
-    }
-    clear test2pf.
-
-    assert test2 as test2pf. {
-      subst test2.
-
-      reify_all.
-
-      unpack_tm_cm.
-      pose empty_egraph as sponge.
-      assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-      saturate_with {{ get_goal_reified_hack;
-      C1; A1; H;
-       wadd_comm;
-      wadd_opp; wadd_0_r
-      ;
-        eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-   ;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-
-   ;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-;
- eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O;
-        app_cons; our_app_cons; skipn_cons; firstn_cons ; sep_comm; wadd_opp; our_wadd_assoc; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l
-    }}.
-
-
-  Time lazymatch goal with
-  | SpongeInv : invariant_egraph ?tm ?cm ?e |- _ =>
-      let l := eval vm_compute in (log e) in idtac l
-  end.
-  Time prove_eq_by_sponge.
-    }
-  subst test2.
-  rewrite test2pf.
-
-  (* new debug session starts here *)
-
-    reify_all.
-
-    lazymatch goal with
-    | cm: @constmap_ref (let tmName := ?tm in let cmName := @?constmapFun tmName in tt)
-      |- _ => pose tm as tmName;
-              let cm' := beta1 constmapFun tmName in
-              pose cm' as cmName;
-              clear cm
-    end.
-    pose empty_egraph as sponge.
-    assert (invariant_egraph tm cm sponge) as SpongeInv by apply empty_invariant.
-
-(*
-    let pfs := constr:({{ H0; C1; A1; H;
-    eq_eq_True; and_True_r; and_True_l; app_nil_r; app_nil_l; skipn_O; firstn_O; app_cons; skipn_cons; firstn_cons; sep_comm; wadd_opp; wadd_assoc; wadd_comm; wadd_0_r; wadd_0_l }}) in
-    let cmds := erase_justifications pfs in
-    lazymatch goal with
-    | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
-        eapply (@apply_commands_correct tm cm cmds pfs e
-                  eq_refl(*<- needs to be conversion, not vm_compute *)) in Inv
-    end.
-*)
-
-    let pfs := constr:({{ H0 ; wadd_comm }}) in
-    let cmds := erase_justifications pfs in
-    lazymatch goal with
-    | Inv : invariant_egraph ?tm ?cm ?e |- _ =>
-        eapply (@apply_commands_correct tm cm cmds pfs e
-                  eq_refl(*<- needs to be conversion, not vm_compute *)) in Inv
-    end.
-
-    lazymatch goal with
-    | Inv : invariant_egraph ?tm ?cm ?eVal |- _ =>
-        set (e := eVal) in Inv
-    end.
-    let cm := eval unfold cm in cm in
-    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd b a)) in
-    pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
-    let cm := eval unfold cm in cm in
-    let r_lhs := reify_expr tm cm (@EGraphList.nil type) HNil (f (wadd a b)) in
-    pose (@lookup_term (@EGraphList.nil type) HNil _ r_lhs e).
-    vm_compute in o,o0.
-
-(* Bug numero 1: la liste va trop long, off by one error, which side is the error on? *)
-
-(* This is the list of results of matching wadd_comm, which should not be empty! *)
-vm_compute in l.
-
-    (* to see what's hidden:
-    Arguments reified : clear implicits.
-    Arguments constmap_ref : clear implicits.
-    Set Printing Implicit. Unset Printing Records.
-    { *)
-
-    Set Ltac Backtrace.
-  Abort.
-End WithLib.
-
-(* OLD CODE:
-
-Require Import Lia.
-Definition travel_value :
-forall (typemap : list Type) (t : type )
- typemap_extension,
- (max_t t) <? (length typemap) = true ->
- Prod ( t_denote (typemap ++ typemap_extension) t -> t_denote typemap t)
- (  t_denote typemap t -> t_denote (typemap ++ typemap_extension) t)
- .
- induction t.
- -
-  simpl.
-  intros;
-  split.
-  eapply Nat.ltb_lt in H.
-  intros.
-  pose proof app_nth1.
-  specialize (H0) with (1:= H).
-  specialize (H0 typemap_extension unit).
-  rewrite H0 in X.
-  eapply X.
-  intros.
-  eapply Nat.ltb_lt in H.
-
-  pose proof app_nth1.
-  specialize (H0) with (1:= H).
-  specialize (H0 typemap_extension unit).
-  rewrite H0.
-  eapply X.
- -
-  simpl.
-  intros.
-  eapply Nat.ltb_lt in H.
-  assert (max_t t2 <? length typemap = true).
-  eapply Nat.ltb_lt .
-  lia.
-  assert (max_t t1 <? length typemap = true).
-  eapply Nat.ltb_lt .
-  lia.
-  pose proof (IHt2 typemap_extension H0).
-  pose proof (IHt1 typemap_extension H1).
-  inversion X.
-  inversion X0.
-  split.
-  intros.
-  eapply x.
-  eapply X1.
-  eapply y0.
-  eapply X2.
-  intros.
-  eapply y.
-  eapply X1.
-  eapply x0.
-  eapply X2 .
-Defined.
-
-Definition upcast_value :
-forall (typemap : list Type) (t : type)
- typemap_extension,
- (max_t t) <? (length typemap) = true ->
- (t_denote (typemap := typemap )t -> t_denote (typemap := typemap ++ typemap_extension) t).
-  intros.
-  pose travel_value.
-  specialize (p typemap t typemap_extension H).
-  inversion p. eapply y. eapply X.
-  Defined.
-
-Definition upcast_constmap typemap typemap_extension (constmap : list (dyn typemap)) : list (dyn (typemap ++ typemap_extension)).
-  induction varmap.
-  -
-    exact nil.
-  -
-    dependent destruction a.
-    pose ((max_t T0 <? (length typemap))) .
-    pose(travel_value typemap T0 typemap_extension).
-    destruct b eqn:?.
-    2:{ exact IHvarmap. }
-    exact ({| T := _; state := (sndP (p Heqb0)) state0 |}::IHvarmap).
-  Defined.
-
-Ltac ltac_diff lbig lsmall :=
-  (* let __ := match O with | _ => idtac "diffcompute" lbig lsmall end in *)
-  match lbig with
-  | ?t :: ?q =>
-  match lsmall with
-  | t :: ?r =>
-  (* let __ := match O with | _ => idtac "find" t q r end in *)
-        ltac_diff q r
-  | nil => constr:(lbig)
-  | _ => fail
-  end
-  | nil =>
-  match lsmall with
-  | nil => constr:(lsmall)
-  | _ => fail
-  end
-  end.
-
-Ltac listFromProp' tmap acc input_prop :=
-  match input_prop with
-  | id_mark ?n ?x =>
-    acc
-  | ?a ?b  =>
-    lazymatch type of b with
-    | Prop =>
-    let acc := listFromProp' tmap acc a in
-    let acc := listFromProp' tmap acc b in
-    acc
-        | Type => fail
-        | _ =>
-    let acc := listFromProp' tmap acc a in
-    let acc := listFromProp' tmap acc b in
-    acc
-    end
-  | ?a =>
-    let t := type of a in
-    let deeply_represented := funToTArrow tmap t in
-    let newa :=  eval cbv  [ Pos.add Pos.of_nat Pos.sub app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_value upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in (upcast_value tmap deeply_represented nil eq_refl a) in
-    addList {| T := deeply_represented ; state := newa : (t_denote (typemap:= tmap) deeply_represented)|} acc
-  end.
-
-(*
-Ltac reify_hyp H oldtypemap oldvarmap x :=
-  idtac "start reify hyp";
-  let oldtm := fresh "oldtm" in
-  let oldvm := fresh "oldvm" in
-  rename oldtypemap into oldtm;
-  rename oldvarmap into oldvm;
-  evar (oldtypemap : list Type);
-  evar (oldvarmap : list (@SModule oldtypemap));
-  let oldtm1 := eval unfold oldtm in oldtm in
-  idtac "yo" oldtm1;
-  evar (x : Type);
-  let newassert := fresh "newassert" in
-  let quan := get_quantifiers H in
-  let quan := type_term quan in
-  idtac quan;
-  let t := type of H in assert t as newassert;
-  reify_forall 0;
-   [
-  match goal with
-  | [ |- ?a = ?b] =>
-  idtac "start listTypes";
-  let typemap := listTypesFromProp oldtm1 (a,b) in
-  idtac "newtypemap" typemap;
-  let diff := ltac_diff typemap oldtm1 in
-  idtac "diff" diff;
-  let oldtm' := eval unfold oldtypemap in oldtypemap in
-  unify oldtm' typemap;
-  pose typemap;
-  idtac typemap;
-  let deepify_quant := ltac_map funToTArrow typemap quan in
-  let deepify_quant := type_term deepify_quant in
-  let oldvm := eval unfold oldvm in oldvm in
-  idtac "deepquant" deepify_quant oldtm1 diff oldvm;
-  let oldvarmap' := constr:(upcast_varmap oldtm1 diff oldvm) in
-  idtac "partial" oldvarmap';
-  let oldvarmap' := eval cbv  [Pos.of_nat Pos.sub Pos.add app_nth1 Init.Nat.max Nat.ltb Nat.leb length max_t upcast_varmap travel_value generate_theorem interp_pattern eq_rect_r eq_rect eq_sym app_assoc' f_equal eq_trans list_ind nth_error nth_deep Pattern_rect nat_rect app rev list_rect type_rect type_rec] in oldvarmap' in
-  idtac "reduced" oldvarmap';
-  let varmap := listFromProp' typemap oldvarmap' (a, b) in
-  idtac "newvarmap" varmap;
-  let oldvm' := eval unfold oldvarmap in oldvarmap in
-  unify oldvm' varmap;
-  pose varmap;
-  idtac "varmap" varmap;
-  let reifedA := reify_prop' deepify_quant typemap varmap a in
-  pose reifedA as A;
-  let reifedB := reify_prop' deepify_quant typemap varmap b in
-  pose reifedB as B;
-  idtac "reifed" reifedA reifedB;
-  let A':= eval unfold A in A in
-  let B':= eval unfold B in B in
-  let c := type of A in
-  match c with
-  | Pattern ?rett =>
-  let T := fresh "newlemma" in
-  let rett := eval simpl in rett in
-    pose (generate_theorem (ctx:= varmap) (typemap := typemap) rett deepify_quant nil DNil
-                                A' B') as T;
-  let x' := eval unfold x in x in
-  unify x' T ;
-  eapply H
-  end
-  end
- |]; clear newassert
- ;
- subst oldtm;
- subst oldvm
- . *)
-Ltac eta_collapse t :=
-  match t with
-  | context f[fun x => ?m x] =>
-    context f[m]
-  end.
-
-Axiom (MYA : Type).
-Axiom (pmya : MYA -> nat).
-Goal ((forall x y ,  x + pmya y = pmya y + x)  -> (forall x y, x * y = y * x) -> True ).
-  intros.
-  pose (nil : list Type).
-  pose (nil : list (SModule (typemap := l))).
-  (* reify_hyp H l l0 myth. *)
-  (* assert (myth ). *)
-  (* exact H. *)
-    admit.
-  (* reify_hyp H0 l l0 y. *)
-  (* Currently works but reverses the order in which it writes the quantifiers. *)
-  (* clear y. *)
-    Abort.
-
-  Definition deeplist2_from_deeplisteclass (quant : list type)
-    (instantiate_quant : DeepListEclass quant) (e : egraph) : option (DeepList2 quant).
-  induction quant.
-  {
-    exact (Some DNil2).
-  }
-  {
-    inversion instantiate_quant.
-    specialize (IHquant cdr).
-    unshelve refine (let potential :=
-              match v with
-              | Some id => (propose_formula (t:=t) ctx e FUEL id )
-              | None => head (dropNone
-                  (map
-                     (fun id => propose_formula (t:=t) ctx e FUEL (Pos.of_nat id))
-                     (seq 0 (Pos.to_nat (max_allocated e)))))
-              end in _).
-    destruct IHquant.
-    2:{ exact None. }
-    destruct potential.
-    econstructor.
-    econstructor.
-    rewrite H0 in f.
-    exact f.
-    exact d.
-    exact None.
-  }
-  Defined.
-
-  Definition deeplist_from_deeplist2 (quant : list (type ))
-    (instantiate_quant : DeepList2 quant)  : (DeepList (typemap := typemap) quant).
-  induction quant.
-  {
-    econstructor.
-  }
-  {
-    inversion instantiate_quant.
-    econstructor.
-    eapply interp_formula; eauto.
-    eauto.
-  }
-  Defined.
-
-
-  Definition nth_deep' {quantifiermap' } n t (pf : nth_error quantifiermap' n = Some t) (l : DeepList2 quantifiermap')
-   : Formula (ctx:=ctx) t.
-  generalize dependent quantifiermap'.
-  induction n.
-  -
-    intros.
-    destruct quantifiermap'.
-    inversion pf.
-    simpl in *.
-    inversion pf.
-    subst.
-    inversion l.
-    exact v.
-    (* exact (interp_formula ctx v). *)
-  -
-    intros.
-    destruct quantifiermap'.
-    inversion pf.
-    cbn in  pf.
-    eapply IHn.
-    exact pf.
-    inversion l. exact cdr.
-  Defined.
-
-
-End Potentials.
-
-Require Import Coq.Program.Equality.
-
-Lemma nth_deep2nth_deep' : forall  {typemap : list Type} quanttype ctx n t0 e0(X : DeepList2 quanttype) ,
-      nth_deep n t0 e0 (deeplist_from_deeplist2 (ctx:=ctx) quanttype X )
-       =
-      interp_formula ctx (nth_deep' (typemap:=typemap) n t0 e0 X).
-  induction quanttype.
-  {
-    simpl.
-    intros.
-    destruct n; inversion e0.
-  }
-  {
-    induction n.
-      intros.
-    inversion e0.
-    destruct H0.
-    subst.
-    destruct X eqn:?.
-    2:{
-      inversion e0.
-    }
-    simpl in e0.
-    inversion X.
-    inversion e0.
-    subst.
-    (* Here I could use my decidable equality to do that instead of Program Equality *)
-    {
-      dependent destruction e0.
-      reflexivity.
-    }
-    intros.
-    simpl in e0.
-    (* Here it seems I would also need to lift a decidable equality... *)
-    dependent destruction X.
-    simpl (nth_deep' _ _ _ _).
-    simpl (deeplist_from_deeplist2 _ _).
-    unfold eq_rect_r, eq_rect.
-    cbv [eq_sym].
-    erewrite <- IHquanttype.
-    reflexivity.
-  }
-  Defined.
-
-  Fixpoint deep2_eqb {typemap : list Type} quanttype ctx (X Y: DeepList2 (typemap:=typemap) (ctx:= ctx) quanttype) : bool.
-  dependent destruction X; dependent destruction Y.
-  {
-    pose (eqf v0 v).
-    pose (deep2_eqb _ _ _ X Y).
-    exact (b && b0).
-  }
-  { exact true. }
-  Defined.
-
-  Definition andb_true_iff  :=
-(fun b1 b2 : bool =>
-if b2 as b return (b1 && b = true <-> b1 = true /\ b = true)
-then
- if b1 as b return (b && true = true <-> b = true /\ true = true)
- then
-  conj (fun _ : true = true => conj eq_refl eq_refl)
-    (fun H : true = true /\ true = true =>
-     and_ind (fun _ _ : true = true => eq_refl) H)
- else
-  conj (fun H : false = true => conj H eq_refl)
-    (fun H : false = true /\ true = true =>
-     and_ind (fun (H0 : false = true) (_ : true = true) => H0) H)
-else
- if b1 as b return (b && false = true <-> b = true /\ false = true)
- then
-  conj (fun H : false = true => conj eq_refl H)
-    (fun H : true = true /\ false = true =>
-     and_ind (fun (_ : true = true) (H1 : false = true) => H1) H)
- else
-  conj (fun H : false = true => conj H H)
-    (fun H : false = true /\ false = true =>
-     and_ind (fun _ H1 : false = true => H1) H))
-     : forall b1 b2 : bool, b1 && b2 = true <-> b1 = true /\ b2 = true.
-
-  Lemma deep2_eqb_deeplist_from {typemap : list Type} quanttype ctx (X Y: DeepList2 (typemap:=typemap) (ctx:= ctx) quanttype) :
-  deep2_eqb quanttype ctx X Y = true -> deeplist_from_deeplist2 quanttype X =  deeplist_from_deeplist2 quanttype Y.
-    induction X.
-    {
-      dependent destruction Y.
-      cbn [deep2_eqb].
-      unfold solution_left, eq_rect_r, eq_rect, eq_sym, f_equal.
-      intros.
-      eapply andb_true_iff in H.
-      destruct H.
-      simpl.
-      unfold solution_left, eq_rect_r, eq_rect, eq_sym, f_equal.
-      pose @eq_correct .
-      specialize (e) with (1:= H).
-      rewrite e.
-      f_equal.
-      eapply IHX.
-      eauto.
-    }
-    eauto.
-  Defined.
-
-
-Lemma elim_quant_interp_pattern :
-forall {typemap t_quantifiermap ctx t0 rett}
-(ql : DeepList t_quantifiermap)
-(v : Formula (typemap := typemap) (ctx:=ctx) t0)
-(p : Pattern rett),
-interp_pattern
-  (DCons t0 (interp_formula ctx v) ql) p =
-  interp_pattern ql (app_pattern v p).
-  induction p .
-  {
-    simpl.
-    erewrite IHp2.
-    erewrite IHp1.
-    reflexivity.
-  }
-  2:{
-    simpl.
-    reflexivity.
-  }
-  {
-    destruct n.
-    {
-
-      simpl (app_pattern _ _).
-      simpl in e.
-      inversion e.
-      dependent destruction e.
-      unfold eq_rect_r, eq_rect, eq_sym, f_equal.
-      unfold interp_pattern at 1.
-      unfold Pattern_rect.
-      simpl nth_deep.
-      unfold eq_rect_r, eq_rect, eq_sym, f_equal.
-      induction v.
+    change Z.div with mydiv in *.
+    change Nat.div with mynatdiv in *.
+    change S with MySuc in *.
+    change O with MyO in *.
+
+      eggify wadd_comm.
+      eggify hyp_missing.
+      eggify wadd_0_l.
+      eggify wadd_0_r.
+      eggify and_True_l.
+      eggify firstn_cons.
+      eggify and_True_r.
+      eggify wadd_assoc.
+      eggify eq_eq_True.
+      eggify A1.
+      eggify C1.
+      eggify app_nil_l.
+      eggify app_nil_r.
+      eggify skipn_cons.
+      eggify app_cons.
+      eggify wadd_opp.
+      eggify H.
+      eggify firstn_O.
+      eggify skipn_O.
+      eggify our_wadd_assoc.
+      eggify our_app_cons.
+      eggify sep_comm.
+      assert (forall {A :Type} (x y :A), Some _ x = Some _ y -> x = y).
+      { intros. inversion H. reflexivity. }
+      assert (1 = 1 -> 1 = 1) by trivial.
+      -
+     eggify H. 
+     eggify H0. 
+      match goal with 
+      | [|- ?g] => assert (hide_goal g)
+      end.
+      Close Scope list.
+      Close Scope list_scope.
+      Undelimit Scope list_scope.
       {
-        simpl.
-        erewrite IHv2; eauto.
-        erewrite IHv1; eauto.
-      }
-      {
-        eauto.
-      }
-    }
-    {
-      simpl in *.
-      reflexivity.
-    }
-  }
-  Qed.
 
-
-Lemma elim_quant_generate_theorem :
-forall {typemap quant_to_do t_quantifiermap}
-(ql : DeepList t_quantifiermap)
-{ctx t0 rett}
-(v : Formula (typemap := typemap) (ctx:=ctx) t0)
-(p pnew: Pattern rett),
-  generate_theorem
-    rett quant_to_do (t0 :: t_quantifiermap)
-    (DCons t0 (interp_formula ctx v) ql) p pnew =
-  generate_theorem
-    rett quant_to_do t_quantifiermap
-    ql (app_pattern v p) (app_pattern v pnew).
-
-    intros typemap quant_to_do t_quantifiermap.
-    change ((fix app (l m : list (type )) {struct l} :
-           list (type ) :=
-         match l with
-         | nil => m
-         | a :: l1 => a :: app l1 m
-         end) t_quantifiermap quant_to_do) with ( t_quantifiermap ++ quant_to_do).
-         revert t_quantifiermap.
-    induction quant_to_do.
-    2:{
-      intros.
-      specialize (IHquant_to_do (t_quantifiermap ++ (cons a nil))).
-      specialize IHquant_to_do with (ctx:=ctx) (t0 := t0) (rett:= rett).
-      specialize (IHquant_to_do) with (v:= v).
-      simpl.
-      Require Import Coq.Logic.FunctionalExtensionality.
-      pose @forall_extensionality.
-      set (eq_rect _ _ _ _ _) as p_transported.
-      set (eq_rect _ _ _ _ _) as pnew_transported.
-      set (eq_rect _ _ _ _ _) as app_p_transported.
-      set (eq_rect _ _ _ _ _) as app_pnew_transported.
-      assert ( forall (x : t_denote a),
-                (fun x => generate_theorem rett quant_to_do (t0 :: t_quantifiermap ++ (cons a nil)) (DCons t0 (interp_formula ctx v) (add_end ql x)) p_transported
-                  pnew_transported ) x=
-                (fun x => generate_theorem rett quant_to_do (t_quantifiermap ++ (cons a nil)) (add_end ql x) (app_p_transported) (app_pnew_transported)) x).
-      intros.
-      erewrite IHquant_to_do.
-      f_equal.
-      {
-        intros.
-        rewrite H5.
-        rewrite H6.
-        reflexivity.
+        eapply (@rew_zoom_fw _ (@wadd a b) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@and (@eq word (@f hole) (@g b)) (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) (@f (@wadd a b)))))));
+        eapply (@rew_zoom_fw _ (@f (@wadd a b)) _  EGGHYPhyp_missing (fun hole => (@and (@eq word (@f (@wadd a b)) hole) (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) (@f (@wadd a b)))))));
+        eapply (@rew_zoom_bw _ True _  (EGGTHSOeq_eq_True _) (fun hole => (@and hole (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) (@f (@wadd a b)))))));
+        eapply (@rew_zoom_bw _ (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) (@f (@wadd a b)))) _  (EGGTHSOand_True_l _) (fun hole => hole));
+        eapply (@rew_zoom_bw _ (@g b) _  EGGHYPhyp_missing (fun hole => (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd b a)) hole))));
+        eapply (@rew_zoom_fw _ (@wadd a b) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f hole) (@g b)))));
+        eapply (@rew_zoom_fw _ (@f (@wadd a b)) _  EGGHYPhyp_missing (fun hole => (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) (@eq word (@f (@wadd a b)) hole))));
+        eapply (@rew_zoom_bw _ True _  (EGGTHSOeq_eq_True _) (fun hole => (@and (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) hole)));
+        eapply (@rew_zoom_bw _ (@sep R (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) m) _  (EGGTHSOand_True_r _) (fun hole => hole));
+        eapply (@rew_zoom_bw _ (@sep (@word_array a (@cons word v0 (@cons word w1 (@cons word w2 (@nil word))))) R m) _  (EGGTHSSSOsep_comm _ _ _) (fun hole => hole));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@cons word w2 (@nil word))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@cons word w1 hole))) R m)));
+        eapply (@rew_zoom_bw _ (@app word (@cons word w1 (@nil word)) (@cons word w2 (@nil word))) _  (EGGTHSSSOapp_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 hole)) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word MyO (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))) _  (EGGTHSOfirstn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@cons word w1 hole) (@cons word w2 (@nil word))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word (@MySuc MyO) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSSSOfirstn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word hole (@cons word w2 (@nil word))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@cons word w1 hole)) (@cons word w2 (@nil word))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))) _  (EGGTHSSSOour_app_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) hole) (@cons word w2 (@nil word))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word MyO (@nil word)) _  (EGGTHSOskipn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 hole)))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word (@MySuc MyO) (@cons word v2 (@nil word))) _  (EGGTHSSSOskipn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 hole)))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word MyO (@cons word v2 (@nil word))) _  (EGGTHSOskipn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc MyO) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word (@MySuc MyO) (@cons word v1 (@cons word v2 (@nil word)))) _  (EGGTHSSSOskipn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc MyO) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) _  (EGGTHSSSOskipn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc MyO) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSSSOskipn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 hole)))) R m)));
+        eapply (@rew_zoom_fw _ (@Z.to_nat (@mydiv 8 4)) _  EGGHYPC1 (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word hole (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@unsigned (@ZToWord 8)) _  EGGHYPA1 (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv hole 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@ZToWord 0) (@ZToWord 8)) _  (EGGTHSOwadd_0_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd a (@wopp a)) _  (EGGTHSOwadd_opp _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd hole (@ZToWord 8))) 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@ZToWord 8) (@wadd a (@wopp a))) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@wadd (@ZToWord 8) a) (@wopp a)) _  (EGGTHSSSOour_wadd_assoc _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd a (@ZToWord 8)) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd hole (@wopp a))) 4)) (@cons word w1 (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) (@cons word w1 hole)))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))) _  (EGGTHSSSOour_app_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word MyO (@cons word v1 (@cons word v2 (@nil word)))) _  (EGGTHSOfirstn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) (@app word hole (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@cons word v0 (@app word (@List.firstn word MyO (@cons word v1 (@cons word v2 (@nil word)))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))) _  (EGGTHSSSOskipn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 hole)))) R m)));
+        eapply (@rew_zoom_bw _ (@nil word) _  (EGGTHSOfirstn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@cons word v0 (@app word hole (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))))) R m)));
+        eapply (@rew_zoom_bw _ (@app word (@cons word v0 (@nil word)) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSSSOapp_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) hole))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word MyO (@cons word v1 (@cons word v2 (@nil word)))) _  (EGGTHSOfirstn_O _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@cons word v0 hole) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) _  (EGGTHSSSOfirstn_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word hole (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) (@cons word w2 hole)))) R m)));
+        eapply (@rew_zoom_bw _ (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))) _  (EGGTHSSSOapp_cons _ _ _) (fun hole => (@sep (@word_array a (@cons word v0 (@app word (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) hole))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@cons word v0 (@List.firstn word (@MySuc MyO) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))))) _  (EGGTHSSSOour_app_cons _ _ _) (fun hole => (@sep (@word_array a hole) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word (@MySuc (@MySuc MyO)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) _  (EGGTHSSSOfirstn_cons _ _ _) (fun hole => (@sep (@word_array a (@app word hole (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@Z.to_nat (@mydiv 8 4)) _  EGGHYPC1 (fun hole => (@sep (@word_array a (@app word (@List.firstn word hole (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@unsigned (@ZToWord 8)) _  EGGHYPA1 (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv hole 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@ZToWord 0) (@ZToWord 8)) _  (EGGTHSOwadd_0_l _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd a (@wopp a)) _  (EGGTHSOwadd_opp _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd hole (@ZToWord 8))) 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@ZToWord 8) (@wadd a (@wopp a))) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd (@wadd (@ZToWord 8) a) (@wopp a)) _  (EGGTHSSSOour_wadd_assoc _ _ _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned hole) 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@wadd a (@ZToWord 8)) _  (EGGTHSSOwadd_comm _ _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd hole (@wopp a))) 4)) (@cons word v0 (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@nil word) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSOapp_nil_l _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) (@cons word v0 hole)) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word MyO (@cons word v1 (@cons word v2 (@nil word)))) _  (EGGTHSOfirstn_O _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) (@cons word v0 (@app word hole (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@app word (@cons word v0 (@List.firstn word MyO (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))) _  (EGGTHSSSOour_app_cons _ _ _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) hole) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_fw _ (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) _  (EGGTHSSSOfirstn_cons _ _ _) (fun hole => (@sep (@word_array a (@app word (@List.firstn word (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4)) (@app word hole (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word)))))))) (@app word (@cons word w2 (@nil word)) (@List.skipn word (@MySuc (@Z.to_nat (@mydiv (@unsigned (@wadd (@wadd a (@ZToWord 8)) (@wopp a))) 4))) (@app word (@List.firstn word (@MySuc MyO) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))) (@app word (@cons word w1 (@nil word)) (@List.skipn word (@MySuc (@MySuc MyO)) (@cons word v0 (@cons word v1 (@cons word v2 (@nil word))))))))))) R m)));
+        eapply (@rew_zoom_bw _ True _  EGGHYPH (fun hole => hole));
+        idtac.
+        constructor.
       }
-      {
-        subst app_p_transported.
-        subst p_transported.
-        unfold app_assoc'.
-        unfold eq_rect, eq_trans, f_equal.
-        remember (list_ind _ _ _ _ ).
-        clear.
-        revert v.
-        revert p.
-        revert rett.
-        revert t0.
-        simpl in y.
-        generalize y.
-        clear y.
-        pose app_assoc'.
-        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-        simpl in e.
-        rewrite <- e.
-        intros.
-        dependent destruction y.
-        reflexivity.
-      }
-      {
-        subst app_pnew_transported.
-        subst pnew_transported.
-        unfold app_assoc'.
-        unfold eq_rect, eq_trans, f_equal.
-        remember (list_ind _ _ _ _ ).
-        clear.
-        revert v.
-        revert pnew.
-        revert rett.
-        revert t0.
-        simpl in y.
-        generalize y.
-        clear y.
-        pose app_assoc'.
-
-        specialize (e _ t_quantifiermap (cons a nil) quant_to_do).
-        simpl in e.
-        rewrite <- e.
-        intros.
-        dependent destruction y.
-        reflexivity.
-      }
-      specialize (e _ _  _ H).
-      apply e.
-    }
-    {
-      intros.
-      cbn [generate_theorem].
-      erewrite <- elim_quant_interp_pattern.
-      erewrite <- elim_quant_interp_pattern.
-      eapply eqPropType.
-      Require Import Coq.Logic.PropExtensionality.
-      pose propositional_extensionality.
-      match goal with
-      | [ |- ?a = ?b] => set a; set b end.
-      specialize (e P P0).
-      (* Upcaster from P = P0 in Prop, to P = P0 in type*)
-      eapply e.
-      subst P P0.
-      clear e.
-      split.
-      {
-        intros.
-        (* This was surprisingly tricky the first time *)
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) p
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) p) .
-        clear H.
-        {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          clear Heqy.
-          clear y.
-          rewrite app_nil_r'.
-          intros.
-          dependent destruction y.
-          reflexivity.
-        }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) pnew
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) pnew).
-        {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          rewrite app_nil_r'.
-          intros.
-          dependent destruction y0.
-          reflexivity.
-        }
-        etransitivity .
-        exact H0.
-        etransitivity .
-        exact H.
-        eauto.
-      }
-      {
-        intros.
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) p
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) p) .
-        clear H.
-        {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          clear Heqy.
-          clear y.
-          rewrite app_nil_r'.
-          intros.
-          dependent destruction y.
-          reflexivity.
-        }
-        assert (interp_pattern (DCons t0 (interp_formula ctx v) (eq_rect_r DeepList ql (app_nil_r' type t_quantifiermap))) pnew
-                =
-                interp_pattern (eq_rect_r DeepList (DCons t0 (interp_formula ctx v) ql) (app_nil_r' type (t0 :: t_quantifiermap))) pnew).
-        {
-          f_equal.
-          remember (interp_formula ctx v).
-          unfold app_nil_r'.
-          simpl.
-          unfold eq_trans, f_equal.
-          remember (list_ind _ _ _ _ ).
-          generalize y.
-          rewrite app_nil_r'.
-          intros.
-          dependent destruction y0.
-          reflexivity.
-        }
-        etransitivity.
-        symmetry;
-        exact H0.
-        etransitivity.
-        exact H.
-        eauto.
-      }
-    }
-    Qed.
-*)
+   exact H.
+   Time Qed.

@@ -6398,15 +6398,82 @@ End PropLemmas.
 
 
 
+Axiom magic : False.
+Definition mydiv := Z.div.
+Definition myabs := Z.abs.
+Definition mylt := Z.lt.
+Definition mynatdiv := Nat.div.
+Definition myapp := List.app.
+Definition MySuc := S.
+Definition MyO := O.
 
-(* 
-Goal True.
-  let count := count_quantifiers wadd_comm in 
-  idtac count;
-  let bouzin := (number_to_ident count) in idtac bouzin. *)
+
+Require Import Eggify.
+Definition pred {A} := A -> Prop.
+Definition mkpair (A B : Type) (x : A) (y:B) := (x,y).
 
 
-  (* Arguments Z.to_nat : clear scopes. *)
+Ltac existential_egg :=
+   match goal with 
+    | [|- ?g ] => match g with 
+    | exists t, @?body t => 
+      let gn := fresh "ToProve" in 
+      let Hgn := fresh "Eqgoal" in 
+      let exi := fresh "ExGoal" in 
+      remember g as gn eqn:Hgn ;
+      assert (forall t, 
+        ltac:( let bdy := eval cbv beta in (body t) in exact bdy )
+        -> (fst (mkpair _ _ gn t))) as exi; 
+    [intros; rewrite Hgn; eexists;eauto|];
+    clear Hgn; eggify exi; eggify_goal
+    end
+    end.
+Section ExistentialTest.
+
+  Arguments fst : clear implicits.
+  Close Scope list.
+  Close Scope list_scope.
+  Undelimit Scope list_scope.
+  Arguments cons [_].
+  Arguments nil : clear implicits.
+  Arguments Some : clear implicits.
+
+
+
+Lemma fst_proj:
+forall {A B:Type} (f : A) (s : B),
+(fst _ _ (mkpair _ _ f s) = f).
+  intros.
+  simpl.
+  eauto.
+Qed.
+
+  Lemma list_goal : forall (x y : list Z), 
+    x = y ->
+    y = cons 42 (cons 2 (nil _)) ->
+    exists t, x = cons t  (cons 2 (nil _)).
+    intros.
+    pose proof @fst_proj as fst_proj .
+    eggify H.
+    eggify H0.
+    eggify fst_proj.
+    existential_egg.
+    (eapply (@rew_zoom_fw _ (@fst Prop Z (@mkpair Prop Z ToProve 42)) _  (EGGTHSSSSOfst_proj _ _ _ _) (fun hole => hole)) || 
+    eapply (@rew_zoom_fw _ (@fst Prop Z (@mkpair Prop Z ToProve 42)) _  (prove_True_eq _ (EGGTHSSSSOfst_proj _ _ _ _)) (fun hole => hole)));
+    (eapply (@rew_zoom_fw _ True _  (EGGTHSSOExGoal _ _) (fun hole => hole)) || 
+    eapply (@rew_zoom_fw _ True _  (prove_True_eq _ (EGGTHSSOExGoal _ _)) (fun hole => hole)));
+    idtac.
+    constructor.
+    Unshelve.
+    eggify_goal.
+    (eapply (@rew_zoom_fw _ y _  EGGHYPH0 (fun hole => (@eq (@list Z) x hole))) || 
+    eapply (@rew_zoom_fw _ y _  (prove_True_eq _ EGGHYPH0) (fun hole => (@eq (@list Z) x hole))));
+    (eapply (@rew_zoom_fw _ x _  EGGHYPH (fun hole => (@eq (@list Z) x hole))) || 
+    eapply (@rew_zoom_fw _ x _  (prove_True_eq _ EGGHYPH) (fun hole => (@eq (@list Z) x hole))));
+    idtac.
+    constructor.
+  Time Qed.
+End ExistentialTest.
 Section WithLib.
 Import List.ListNotations.
   Context (word: Type)
@@ -6449,20 +6516,15 @@ Import List.ListNotations.
     pose proof PropLemmas.eq_eq_True as eq_eq_True.
 
   Definition lipstick {A:Type} {a:A} := a.
-
-
   Arguments cons [_].
   Arguments nil : clear implicits.
   Arguments Some : clear implicits.
-  Definition mydiv := Z.div.
-  Definition myabs := Z.abs.
-  Definition mylt := Z.lt.
-  Definition mynatdiv := Nat.div.
-  Definition myapp := List.app.
-  Definition MySuc := S.
-  Definition MyO := O.
-  Axiom magic : False.
-  Require Import Eggify.
+
+
+
+
+
+
   Lemma simplification1: forall (a: word) (w1_0 w2_0 w1 w2: word) (vs: list word)
                                (R: mem -> Prop) (m: mem) (cond0_0 cond0: bool)
         (f g: word -> word) (b: word)
@@ -6484,7 +6546,6 @@ Import List.ListNotations.
         f (wadd b a) = f (wadd a b).
   Proof.
     intros.
-
     pose_list_lemmas.
     pose_prop_lemmas.
     specialize (eq_eq_True word).
@@ -6567,7 +6628,7 @@ Import List.ListNotations.
 
     (* eggify H0.  *)
     assert (2 < 3) by lia.
-    assert (0 < 2 ) by lia .
+    assert (0 < 2 ) by lia.
     assert (forall (x : Z), 0 < x -> (Z.abs x) = x) by lia.
     assert (Z.abs (unsigned b) = 3).
     Close Scope list.

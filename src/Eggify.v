@@ -152,7 +152,7 @@ Ltac eggify H :=
     assert (hide_qt a) as th_name by exact H;
     clear H
   end.
-Ltac eggify_goal := match goal with 
+Ltac eggify_goal := cbv [qmid]; match goal with 
         | [|- ?g] => change g with (hide_goal g)
        end.
 

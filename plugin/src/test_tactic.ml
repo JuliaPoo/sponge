@@ -197,16 +197,15 @@ exception Unsupported
 let lookup_name nameEnv index =
   List.nth nameEnv (index - 1)
 
-let dedot s =
-  (* to turn into valid rust identifier *)
-  Str.global_replace (Str.regexp "\\.") "DOT" s
+let make_rust_valid s =
+  Str.global_replace (Str.regexp "@") "AT" (Str.global_replace (Str.regexp "\\.") "DOT" s)
 
 let print_lang arities chan =
   Printf.fprintf chan "define_language! {\n";
   Printf.fprintf chan "  pub enum CoqSimpleLanguage {\n";
   Printf.fprintf chan "    Num(i32),\n";
   Hashtbl.iter
-    (fun f n -> Printf.fprintf chan "    \"%s\" = %s([Id; %d]),\n" f (dedot f) n)
+    (fun f n -> Printf.fprintf chan "    \"%s\" = %s([Id; %d]),\n" f (make_rust_valid f) n)
     arities;
   Printf.fprintf chan "    Symbol(Symbol),\n";
   Printf.fprintf chan "  }\n";
@@ -217,20 +216,47 @@ let register_arity arities f n =
   | Some m -> if n == m then () else failwith (f ^ " appears with different arities")
   | None -> Hashtbl.add arities f n
 
+let has_implicit_args gref =
+  let open Impargs in
+  let impargs = select_stronger_impargs (implicits_of_global gref) in
+  let impargs = List.map is_status_implicit impargs in
+  (*Printf.printf "%s\n" (String.concat " "
+                          (List.map (fun b -> if b then "I" else "E") impargs)); *)
+  List.exists (fun b -> b) impargs
+
 let rec process_expr env sigma arities nameEnv e =
-  let ind_to_str i = Pp.string_of_ppcmds (Printer.pr_inductive env i) in
-  let const_to_str c = Pp.string_of_ppcmds (Printer.pr_constant env c) in
+  let ind_to_str i =
+    let r = Names.GlobRef.IndRef i in
+    let a = if has_implicit_args r then "@" else "" in
+    a ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
+  let const_to_str c =
+    let r = Names.GlobRef.ConstRef c in
+    let a = if has_implicit_args r then "@" else "" in
+    a ^ Pp.string_of_ppcmds (Printer.pr_constant env c) in
+  let ctor_to_str c =
+    let r = Names.GlobRef.ConstructRef c in
+    let a = if has_implicit_args r then "@" else "" in
+    a ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
-  let ctor_to_str c = Pp.string_of_ppcmds (Printer.pr_constructor env c) in
   try Stdlib.string_of_int (z_to_int sigma e)
   with NotACoqNumber ->
         match EConstr.kind sigma e with
         | Constr.App (f, args) -> begin
             (let arity = Array.length args in
              match EConstr.kind sigma f with
-             | Constr.Ind (i, univs) -> register_arity arities (ind_to_str i) arity
-             | Constr.Const (c, univs) -> register_arity arities (const_to_str c) arity
+             | Constr.Ind (i, univs) ->
+                (*let r = Names.GlobRef.IndRef i in
+                Printf.printf "%s :::" s;
+                let _ = has_implicit_args r in*)
+                let s = ind_to_str i in
+                register_arity arities s arity
+             | Constr.Const (c, univs) ->
+                (*let r = Names.GlobRef.ConstRef c in
+                Printf.printf "%s :::" s;
+                let _ = has_implicit_args r in*)
+                let s = const_to_str c in
+                register_arity arities s arity
              | Constr.Var id -> register_arity arities (Names.Id.to_string id) arity
              | _ -> ());
             "(" ^ process_expr env sigma arities nameEnv f ^ " " ^

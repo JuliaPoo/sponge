@@ -208,7 +208,7 @@ let print_lang arities chan =
   Hashtbl.iter
     (fun f n -> Printf.fprintf chan "    \"%s\" = %s([Id; %d]),\n" f (dedot f) n)
     arities;
-  Printf.fprintf chan "    Symbol(Symbol)\n";
+  Printf.fprintf chan "    Symbol(Symbol),\n";
   Printf.fprintf chan "  }\n";
   Printf.fprintf chan "}\n\n"
 
@@ -257,7 +257,8 @@ let eggify_thm env sigma arities term =
               let open Coqlib in
               if GlobRef.equal (Coqlib.build_coq_eq_data ()).eq (GlobRef.IndRef i)
               then
-                let op = if List.length nameEnv == 0 then " <=> " else " => " in
+                (*let op = if List.length nameEnv == 0 then " <=> " else " => " in*)
+                let op = " => " in
                 let l = process_expr env sigma arities nameEnv lhs in
                 let r = process_expr env sigma arities nameEnv rhs in
                 "\"" ^ l ^ "\"" ^ op ^ "\"" ^ r ^ "\""
@@ -302,8 +303,7 @@ let egg_simpl_goal () =
            let name = Names.Id.to_string id.binder_name in
            try
              let stmt = eggify_thm (Goal.env gl) sigma arities (EConstr.of_constr t) in
-             (*Printf.printf "rewrite!(\"%s\"; %s),\n" name stmt *)
-             rules_str := !rules_str ^ "    rewrite!(\"" ^ name ^ "\"; " ^ stmt ^ "\n";
+             rules_str := !rules_str ^ "    rewrite!(\"" ^ name ^ "\"; " ^ stmt ^ "),\n";
            with
              Unsupported -> ()
           end
@@ -315,9 +315,11 @@ let egg_simpl_goal () =
     print_lang arities stdout;
 
     Printf.printf "pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {\n";
-    Printf.printf "  let mut v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
+    Printf.printf "  let v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
     Printf.printf "%s" !rules_str;
-    Printf.printf "  )].concat()); v\n}\n\n";
+    Printf.printf "  ];\n";
+    Printf.printf "  v\n";
+    Printf.printf "}\n\n";
 
     Printf.printf "pub fn run_simplifier(f : fn(&str) -> ()) {\n";
     Printf.printf "  let st : &str = \"%s\";\n" g;

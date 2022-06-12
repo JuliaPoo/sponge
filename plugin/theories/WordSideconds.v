@@ -1,3 +1,4 @@
+Require Import egg.Loader.
 Require Import Coq.ZArith.ZArith. Open Scope Z_scope.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.PropExtensionality.
@@ -45,7 +46,7 @@ Module ZT.
   Lemma div_mul_lt: forall x d1 d2,
       (0 < x = True)->
       (0 < d1 = True) ->
-      (d1 < d2 = True) ->
+      (d1 < d2 = True)->
       (x / d2 * d1 < x = True).
   Proof.
     intros. deTrue. Z.to_euclidean_division_equations. nia.
@@ -135,6 +136,11 @@ Section WithLib.
   Lemma bsearch_goal1_proof_without_transitivity: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds.
+
+    pose (l := 1). move l after H0.
+    assert (False -> True) as Impl1 by intuition.
+
+    egg_simpl_goal.
 
     (* This proof does not use any lemmas with universally quantified variables
        that don't appear in the conclusion (like eg transitivity) *)

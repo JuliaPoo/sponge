@@ -271,37 +271,55 @@ let rec process_expr env sigma arities nameEnv e =
         | Constr.Sort s -> sort_to_str s
         | _ -> raise Unsupported
 
-let eggify_thm env sigma arities term =
-  let process_equality nameEnv t =
-    match EConstr.kind sigma t with
-    | Constr.App (e, args) -> begin
-       match args with
-       | [| tp; lhs; rhs |] -> begin
-           match EConstr.kind sigma e with
-           | Constr.Ind (i, univs) ->
-              let open Names in
-              let open Coqlib in
-              if GlobRef.equal (Coqlib.build_coq_eq_data ()).eq (GlobRef.IndRef i)
-              then
-                (*let op = if List.length nameEnv == 0 then " <=> " else " => " in*)
-                let op = " => " in
-                let l = process_expr env sigma arities nameEnv lhs in
-                let r = process_expr env sigma arities nameEnv rhs in
-                "\"" ^ l ^ "\"" ^ op ^ "\"" ^ r ^ "\""
-              else raise Unsupported
-           | _ -> raise Unsupported
-         end
-       | _ -> raise Unsupported
-      end
-    | _ -> raise Unsupported in
+let destruct_eq sigma t =
+  match EConstr.kind sigma t with
+  | Constr.App (e, args) ->
+     (match args with
+      | [| tp; lhs; rhs |] ->
+         (match EConstr.kind sigma e with
+          | Constr.Ind (i, univs) ->
+             let open Names in
+             let open Coqlib in
+             if GlobRef.equal (Coqlib.build_coq_eq_data ()).eq (GlobRef.IndRef i)
+             then Some (tp, lhs, rhs)
+             else None
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
+let rec count_leading_empty_strs l =
+  match l with
+  | "" :: t -> 1 + count_leading_empty_strs t
+  | _ -> 0
+
+let eggify_thm env sigma arities exprs name term =
+  let register_expr e = Hashtbl.replace exprs e () in
+
+  let to_equality nameEnv t =
+    let e1, e2 = match destruct_eq sigma t with
+      | Some (_, lhs, rhs) ->
+         (process_expr env sigma arities nameEnv lhs,
+          process_expr env sigma arities nameEnv rhs)
+      | None ->
+         (process_expr env sigma arities nameEnv t, "True") in
+    if List.length nameEnv == count_leading_empty_strs nameEnv
+    then (register_expr e1; register_expr e2) else ();
+    (e1, e2) in
 
   let rec process_impls nameEnv t =
     match EConstr.kind sigma t with
-    | Constr.Prod (name, tp, body) ->
+    | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         process_equality nameEnv tp ^ "--->" ^ process_impls ("" :: nameEnv) body
+         let i = count_leading_empty_strs nameEnv in
+         let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
+         let (lhs, rhs) = to_equality nameEnv tp in
+         (* including $ to avoid clashes with Coq variable names *)
+         prefix ^ "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
+           process_impls ("" :: nameEnv) body
        else raise Unsupported (* foralls after impls are not supported *)
-    | _ -> process_equality nameEnv t in
+    | _ ->
+       let (lhs, rhs) = to_equality nameEnv t in
+       "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
   let rec process_foralls nameEnv t =
     match EConstr.kind sigma t with
@@ -310,7 +328,13 @@ let eggify_thm env sigma arities term =
          process_impls nameEnv t
        else
          process_foralls (binder_name_to_string b :: nameEnv) body
-    | _ -> process_equality nameEnv t in
+    | _ ->
+       let (lhs, rhs) = to_equality nameEnv t in
+       if List.length nameEnv == 0 then
+         "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
+         "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
+       else
+         "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
   process_foralls [] term
 
@@ -319,24 +343,29 @@ let egg_simpl_goal () =
     let open Context in
     let open Named.Declaration in
     let sigma = Tacmach.project gl in
+    let env = Goal.env gl in
     let hyps = Environ.named_context (Goal.env gl) in
     Printf.printf "\n#![allow(missing_docs,non_camel_case_types)]\n";
     Printf.printf "use crate ::*;\n";
     let arities = Hashtbl.create 20 in
+    let exprs = Hashtbl.create 20 in
     let rules_str = ref "" in
     List.iter (function
         | LocalAssum (id, t) -> begin
-           let name = Names.Id.to_string id.binder_name in
-           try
-             let stmt = eggify_thm (Goal.env gl) sigma arities (EConstr.of_constr t) in
-             rules_str := !rules_str ^ "    rewrite!(\"" ^ name ^ "\"; " ^ stmt ^ "),\n";
-           with
-             Unsupported -> ()
+            let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
+            if Termops.is_Prop sigma tp then
+              let name = Names.Id.to_string id.binder_name in
+              try
+                let rule = eggify_thm env sigma arities exprs name (EConstr.of_constr t) in
+                rules_str := !rules_str ^ rule;
+              with
+                Unsupported -> ()
+            else ()
           end
         | LocalDef (id, c, t) -> ())
       (List.rev hyps);
 
-    let g = process_expr (Goal.env gl) sigma arities [] (Goal.concl gl) in
+    let g = process_expr env sigma arities [] (Goal.concl gl) in
 
     print_lang arities stdout;
 
@@ -349,7 +378,10 @@ let egg_simpl_goal () =
 
     Printf.printf "pub fn run_simplifier(f : fn(&str) -> ()) {\n";
     Printf.printf "  let st : &str = \"%s\";\n" g;
-    Printf.printf "  f(&st);\n";
+    Printf.printf "  let es = vec![\n";
+    Hashtbl.iter (fun e _ -> Printf.printf "    \"%s\",\n" e) exprs;
+    Printf.printf "  ];\n";
+    Printf.printf "  f_simplify(st, es);\n";
     Printf.printf "}\n\n";
 
     Proofview.tclUNIT ()

@@ -292,7 +292,39 @@ let rec count_leading_empty_strs l =
   | "" :: t -> 1 + count_leading_empty_strs t
   | _ -> 0
 
-let eggify_thm env sigma arities exprs name term =
+(* arities:  maps function symbols to the number of arguments they take
+   qnames    maps lemma names to their list of quantifier names, "" for hypotheses
+   exprs:    set (represented as Hashtbl with unit values) of extra expressions
+             to add to the egraph
+   name:     name of thm
+   term:     thm statement *)
+let eggify_thm env sigma arities qnames exprs name term =
+  (* TODO this map of triggers should not be hardcoded, but provided in the Coq
+     code by the user *)
+  (* When does a rule fire? In all cases, all hypotheses must appear in the egraph.
+     Additional conditions:
+     - If the conclusion is an equality: The lhs of the equality must appear in the egraph.
+     - If the conclusion is not an equality:
+       + If no triggers are registered:
+         The conclusion must appear in the egraph (often not the case!)
+       + If a list of triggers is registered: Each trigger expr must appear in the egraph. *)
+  let triggers = Hashtbl.create 20 in
+(*
+  Hashtbl.replace triggers "unsigned_of_Z" [];
+  Hashtbl.replace triggers "unsigned_sru_to_div_pow2" [];
+  Hashtbl.replace triggers "unsigned_slu_to_mul_pow2" [];
+  Hashtbl.replace triggers "Z_forget_mod_in_lt_l" [];
+  Hashtbl.replace triggers "Z_mul_le" [];
+  Hashtbl.replace triggers "Z_div_pos" [];
+  Hashtbl.replace triggers "Z_div_mul_lt" [];
+  Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
+ *)
+  Hashtbl.replace triggers "Z_mul_le" ["(Z.mul ?e1 ?e2)"];
+  Hashtbl.replace triggers "Z_div_pos" ["(Z.div ?a ?b)"];
+  Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
+  Hashtbl.replace triggers "unsigned_nonneg" ["(unsigned ?x)"];
+  Hashtbl.replace triggers "Z_div_mul_lt" [];
+
   let register_expr e = Hashtbl.replace exprs e () in
 
   let to_equality nameEnv t =
@@ -307,19 +339,28 @@ let eggify_thm env sigma arities exprs name term =
     (e1, e2) in
 
   let rec process_impls nameEnv t =
+    let i = count_leading_empty_strs nameEnv in
+    let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
+    prefix ^
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         let i = count_leading_empty_strs nameEnv in
-         let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
          let (lhs, rhs) = to_equality nameEnv tp in
          (* including $ to avoid clashes with Coq variable names *)
-         prefix ^ "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
+         "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
            process_impls ("" :: nameEnv) body
        else raise Unsupported (* foralls after impls are not supported *)
     | _ ->
+       Hashtbl.replace qnames name (List.rev nameEnv);
        let (lhs, rhs) = to_equality nameEnv t in
-       "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
+       let o = Hashtbl.find_opt triggers name in
+       if Option.has_some o && rhs == "True" then
+         let t = String.concat ""
+           (List.mapi (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
+              (Option.get o)) in
+         t ^ "?lhs$ = True\" => \"" ^ lhs ^ "\"),\n"
+       else
+         "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
   let rec process_foralls nameEnv t =
     match EConstr.kind sigma t with
@@ -329,12 +370,17 @@ let eggify_thm env sigma arities exprs name term =
        else
          process_foralls (binder_name_to_string b :: nameEnv) body
     | _ ->
-       let (lhs, rhs) = to_equality nameEnv t in
-       if List.length nameEnv == 0 then
-         "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
-         "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
-       else
-         "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
+       if Option.has_some (Hashtbl.find_opt triggers name)
+       then process_impls nameEnv t
+       else begin
+         Hashtbl.replace qnames name (List.rev nameEnv);
+         let (lhs, rhs) = to_equality nameEnv t in
+         if List.length nameEnv == 0 then
+           "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
+           "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
+         else
+           "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n"
+         end in
 
   process_foralls [] term
 
@@ -345,18 +391,20 @@ let egg_simpl_goal () =
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
     let hyps = Environ.named_context (Goal.env gl) in
-    Printf.printf "\n#![allow(missing_docs,non_camel_case_types)]\n";
-    Printf.printf "use crate ::*;\n";
+
     let arities = Hashtbl.create 20 in
+    let qnames = Hashtbl.create 20 in
     let exprs = Hashtbl.create 20 in
     let rules_str = ref "" in
+
     List.iter (function
         | LocalAssum (id, t) -> begin
             let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
             if Termops.is_Prop sigma tp then
               let name = Names.Id.to_string id.binder_name in
               try
-                let rule = eggify_thm env sigma arities exprs name (EConstr.of_constr t) in
+                let rule = eggify_thm env sigma arities qnames exprs name
+                             (EConstr.of_constr t) in
                 rules_str := !rules_str ^ rule;
               with
                 Unsupported -> ()
@@ -367,22 +415,44 @@ let egg_simpl_goal () =
 
     let g = process_expr env sigma arities [] (Goal.concl gl) in
 
-    print_lang arities stdout;
+    let filepath = "/home/sam/git/clones/egg/src/rw_rules.rs" (* adapt as needed *) in
+    let oc = open_out filepath in
 
-    Printf.printf "pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {\n";
-    Printf.printf "  let v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
-    Printf.printf "%s" !rules_str;
-    Printf.printf "  ];\n";
-    Printf.printf "  v\n";
-    Printf.printf "}\n\n";
+    Printf.fprintf oc "\n#![allow(missing_docs,non_camel_case_types)]\n";
+    Printf.fprintf oc "use crate ::*;\n";
 
-    Printf.printf "pub fn run_simplifier(f : fn(&str) -> ()) {\n";
-    Printf.printf "  let st : &str = \"%s\";\n" g;
-    Printf.printf "  let es = vec![\n";
-    Hashtbl.iter (fun e _ -> Printf.printf "    \"%s\",\n" e) exprs;
-    Printf.printf "  ];\n";
-    Printf.printf "  f_simplify(st, es);\n";
-    Printf.printf "}\n\n";
+    print_lang arities oc;
+
+    Printf.fprintf oc "pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {\n";
+    Printf.fprintf oc "  let v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
+    Printf.fprintf oc "%s" !rules_str;
+    Printf.fprintf oc "  ];\n";
+    Printf.fprintf oc "  v\n";
+    Printf.fprintf oc "}\n\n";
+
+    Printf.fprintf oc "pub fn get_lemma_arity(name: &str) -> Option<usize> {\n";
+    Printf.fprintf oc "  let v = vec![\n";
+    Hashtbl.iter (fun l ns -> Printf.fprintf oc "    (\"%s\", %d),\n" l (List.length ns))
+      qnames;
+    Printf.fprintf oc "  ];\n";
+    Printf.fprintf oc "  let o = v.iter().find(|t| t.0 == name);\n";
+    Printf.fprintf oc "  match o {\n";
+    Printf.fprintf oc "    Some((_, n)) => { return Some(*n); }\n";
+    Printf.fprintf oc "    None => { return None; }\n";
+    Printf.fprintf oc "  }\n";
+    Printf.fprintf oc "}\n\n";
+
+    Printf.fprintf oc "#[allow(unused_variables)]\n";
+    Printf.fprintf oc "pub fn run_simplifier(f_simplify : fn(&str, Vec<&str>) -> (), f_prove : fn(&str, &str, Vec<&str>) -> ()) {\n";
+    Printf.fprintf oc "  let st : &str = \"%s\";\n" g;
+    Printf.fprintf oc "  let es = vec![\n";
+    Hashtbl.iter (fun e _ -> Printf.fprintf oc "    \"%s\",\n" e) exprs;
+    Printf.fprintf oc "  ];\n";
+    Printf.fprintf oc "  f_simplify(st, es);\n";
+    Printf.fprintf oc "}\n\n";
+
+    close_out oc;
+    Printf.printf "Wrote Rust code to %s\n" filepath;
 
     Proofview.tclUNIT ()
     end

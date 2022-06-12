@@ -1,4 +1,5 @@
 -R src/ Sponge
+src/Eggify.v
 src/EGraphList.v
 src/Enodes.v
 src/Congruence.v

@@ -83,10 +83,9 @@ Section WithLib.
 
   Context (wadd_0_l: forall a, wadd (ZToWord 0) a = a)
           (wadd_0_r: forall a, wadd a (ZToWord 0) = a)
-(*
           (wadd_comm: forall a b, wadd a b = wadd b a)
-          (wadd_assoc: forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
-*)
+          (wadd_to_left_assoc : forall a b c, wadd a (wadd b c) = wadd (wadd a b) c)
+          (wadd_to_right_assoc: forall a b c, wadd (wadd a b) c = wadd a (wadd b c))
           (wadd_opp: forall a, wadd a (wopp a) = ZToWord 0).
 
   Context (wsub_def: forall a b, wsub a b = wadd a (wopp b)).
@@ -99,8 +98,18 @@ Section WithLib.
               (unsigned (wsru x (ZToWord a))) = (unsigned x) / 2 ^ a)
           (unsigned_slu_to_mul_pow2: forall (x : word) (a : Z),
               0 <= a < 32 ->
-              (unsigned (wslu x (ZToWord a))) = ((unsigned x) * 2 ^ a) mod 2 ^ 32)
-          (word_sub_add_l_same_l: forall x y : word, (wsub (wadd x y) x) = y).
+              (unsigned (wslu x (ZToWord a))) = ((unsigned x) * 2 ^ a) mod 2 ^ 32).
+(* BAD:
+      (word_sub_add_l_same_l: forall x y : word, (wsub (wadd x y) x) = y)
+      x + v - x
+      gets rewritten into
+      x + (x + v - x) - x
+      and so on, because (x + v - x) is already present
+
+same issue also appears without word_sub_add_l_same_l,
+because wsub_def, wadd_comm, wadd_to_right_assoc together can prove this
+equality as well, just in more steps
+*)
 
   Ltac pose_const_sideconds :=
     assert (0 <= 8 < 2 ^ 32) as C1 by consts;
@@ -130,7 +139,11 @@ Section WithLib.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
 
-    rewrite word_sub_add_l_same_l.
+    rewrite wsub_def.
+    rewrite (wadd_comm x1).
+    rewrite wadd_to_right_assoc.
+    rewrite wadd_opp.
+    rewrite wadd_0_r.
     rewrite unsigned_of_Z by exact C1.
     rewrite <- H.
 
@@ -148,22 +161,14 @@ Section WithLib.
     exact Coq.Init.Logic.I.
   Qed.
 
+
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
     egg_simpl_goal.
+  Abort.
 
-(eapply (@rew_zoom_bw _ (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)) _  (word_sub_add_l_same_l _ _) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x)))))) ||
-eapply (@rew_zoom_bw _ (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)) _  (prove_True_eq _ (word_sub_add_l_same_l _ _)) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x)))))));
-(eapply (@rew_zoom_bw _ (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) _  (unsigned_slu_to_mul_pow2 _ _ _) (fun hole => (Z.lt hole (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x)))))) ||
-eapply (@rew_zoom_bw _ (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) _  (prove_True_eq _ (unsigned_slu_to_mul_pow2 _ _ _)) (fun hole => (Z.lt hole (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x)))))));
-(eapply (@rew_zoom_bw _ 8 _  (unsigned_of_Z _ _) (fun hole => (Z.lt (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) (Z.mul hole (Z.of_nat (@length word x)))))) ||
-eapply (@rew_zoom_bw _ 8 _  (prove_True_eq _ (unsigned_of_Z _ _)) (fun hole => (Z.lt (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) (Z.mul hole (Z.of_nat (@length word x)))))));
-(eapply (@rew_zoom_fw _ (unsigned (wsub x2 x1)) _  H (fun hole => (Z.lt (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) hole))) ||
-eapply (@rew_zoom_fw _ (unsigned (wsub x2 x1)) _  (prove_True_eq _ H) (fun hole => (Z.lt (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) hole)))).
-(eapply (@rew_zoom_bw _ True _  (Z_forget_mod_in_lt_l _ _ _ _ _ _) (fun hole => hole)) ||
-eapply (@rew_zoom_bw _ True _  (prove_eq_True(*<-----changed*) _ (Z_forget_mod_in_lt_l _ _ _ _ _ _)) (fun hole => hole))).
-idtac.
+(*
 
 constructor.
 Unshelve.
@@ -181,7 +186,6 @@ Unshelve.
     exact q3.
   Qed.
 
-(*
   Lemma bsearch_goal1_proof1: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds.

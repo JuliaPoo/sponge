@@ -1,3 +1,4 @@
+open Sexplib (* opam install sexplib *)
 open Proofview
 
 let constants = ref ([] : EConstr.t list)
@@ -439,6 +440,17 @@ let egg_simpl_goal () =
 
     close_out oc;
     Printf.printf "Wrote Rust code to %s\n" filepath;
+
+    let exp1 = Sexp.(List [
+                         Atom "This";
+                         List [Atom "is"; Atom "an"];
+                         List [Atom "s"; Atom "expression"]
+               ]) in
+    (* Serialize an Sexp object into a string *)
+    print_endline (Sexp.to_string exp1);
+    (* Parse a string and produce a Sexp object  *)
+    let exp2 = Sexp.of_string "(This (is an) (s expression to be parsed))" in
+    print_endline (Sexp.to_string_hum exp2);
 
     Proofview.tclUNIT ()
     end

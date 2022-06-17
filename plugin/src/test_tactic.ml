@@ -427,8 +427,9 @@ let egg_simpl_goal proof_file_path =
 
     let g = process_expr env sigma arities [] (Goal.concl gl) in
 
-    let filepath = "/home/sam/git/clones/egg/src/rw_rules.rs" (* adapt as needed *) in
-    let oc = open_out filepath in
+    let egg_repo_path = "/home/sam/git/clones/egg" (* adapt as needed *) in
+    let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
+    let oc = open_out rust_rules_path in
 
     Printf.fprintf oc "\n#![allow(missing_docs,non_camel_case_types)]\n";
     Printf.fprintf oc "use crate ::*;\n";
@@ -478,18 +479,25 @@ let egg_simpl_goal proof_file_path =
     Printf.fprintf oc "}\n\n";
 
     close_out oc;
-    Printf.printf "Wrote Rust code to %s\n" filepath;
+    Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
+    flush stdout;
 
-    let exp1 = Sexp.(List [
-                         Atom "This";
-                         List [Atom "is"; Atom "an"];
-                         List [Atom "s"; Atom "expression"]
-               ]) in
-    (* Serialize an Sexp object into a string *)
-    print_endline (Sexp.to_string exp1);
-    (* Parse a string and produce a Sexp object  *)
-    let exp2 = Sexp.of_string "(This (is an) (s expression to be parsed))" in
-    print_endline (Sexp.to_string_hum exp2);
-
-    Proofview.tclUNIT ()
+    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run coq" in
+    let status = Sys.command cargo_command in
+    Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
+    if status != 0 then
+      Tacticals.tclZEROMSG (Pp.str "invoking rust failed")
+    else begin
+        let exp1 = Sexp.(List [
+                             Atom "This";
+                             List [Atom "is"; Atom "an"];
+                             List [Atom "s"; Atom "expression"]
+                   ]) in
+        (* Serialize an Sexp object into a string *)
+        print_endline (Sexp.to_string exp1);
+        (* Parse a string and produce a Sexp object  *)
+        let exp2 = Sexp.of_string "(This (is an) (s expression to be parsed))" in
+        print_endline (Sexp.to_string_hum exp2);
+        Proofview.tclUNIT ()
+      end;
     end

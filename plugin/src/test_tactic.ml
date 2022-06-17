@@ -147,6 +147,9 @@ let binder_name_to_string b =
   let open Context in
   Pp.string_of_ppcmds (Names.Name.print b.binder_name)
 
+let equals_glob_ref glref c =
+  let open Names in GlobRef.equal (Coqlib.lib_ref glref) c
+
 exception NotACoqNumber
 
 let positive_to_int sigma e =
@@ -279,16 +282,31 @@ let destruct_eq sigma t =
       | _ -> None)
   | _ -> None
 
+let rec convert_dyn_list sigma t =
+  match EConstr.kind sigma t with
+  | Constr.App (h, args) ->
+     (match EConstr.kind sigma h with
+      | Constr.Construct (c, univs) ->
+         if equals_glob_ref "egg.dyn_cons" (Names.GlobRef.ConstructRef c) then
+           (match args with
+            | [| _tp; head; tail |] -> head :: convert_dyn_list sigma tail
+            | _ -> failwith "not a well-typed dyn_list")
+         else failwith "Constr.App is not a dyn_list"
+      | _ -> failwith "expected dyn_list, but got app whose head is not a constructor")
+  | Constr.Construct (c, univs) ->
+     if equals_glob_ref "egg.dyn_nil" (Names.GlobRef.ConstructRef c) then []
+     else failwith "expected dyn_list, but got constructor which is not dyn_nil"
+  | _ -> failwith "not a dyn_list"
+
 let destruct_trigger sigma t =
   match EConstr.kind sigma t with
   | Constr.App (trg, args) ->
      (match args with
-      | [| tp; x |] ->
+      | [| triggers; x |] ->
          (match EConstr.kind sigma trg with
           | Constr.Const (c, univs) ->
-             let open Names in
-             if GlobRef.equal (Coqlib.lib_ref "egg.trigger") (GlobRef.ConstRef c)
-             then Some x
+             if equals_glob_ref "egg.with_trigger" (Names.GlobRef.ConstRef c)
+             then Some (convert_dyn_list sigma triggers, x)
              else None
           | _ -> None)
       | _ -> None)
@@ -319,31 +337,6 @@ let eggify_hyp env sigma arities qnames exprs hyp =
     then (register_expr e1; register_expr e2) else ();
     (e1, e2) in
 
-  let rec process_impls name nameEnv manual_triggers t =
-    let i = count_leading_empty_strs nameEnv in
-    let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
-    prefix ^
-    match EConstr.kind sigma t with
-    | Constr.Prod (b, tp, body) ->
-       if EConstr.Vars.noccurn sigma 1 body then
-         match destruct_trigger sigma tp with
-         | Some trigger_expr ->
-            let trigger_str = process_expr env sigma arities nameEnv trigger_expr in
-            process_impls name ("" :: nameEnv) (trigger_str :: manual_triggers) body
-         | None ->
-           let (lhs, rhs) = to_equality nameEnv tp in
-           (* including $ to avoid clashes with Coq variable names *)
-           "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
-             process_impls name ("" :: nameEnv) manual_triggers body
-       else raise Unsupported (* foralls after impls are not supported *)
-    | _ ->
-       Hashtbl.replace qnames name (List.rev nameEnv);
-       let (lhs, rhs) = to_equality nameEnv t in
-        let t = String.concat ""
-           (List.mapi (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
-              manual_triggers) in
-        t ^ "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
-
   let stringify_equality_without_sideconds name nameEnv lhs rhs =
     Hashtbl.replace qnames name (List.rev nameEnv);
     if List.length nameEnv == 0 then
@@ -352,6 +345,36 @@ let eggify_hyp env sigma arities qnames exprs hyp =
     else
       "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
+  let rec process_impls name nameEnv manual_triggers t =
+    let i = count_leading_empty_strs nameEnv in
+    let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
+    match destruct_trigger sigma t with
+    | Some (trigger_exprs, body) ->
+       let trigger_strs = List.map (process_expr env sigma arities nameEnv) trigger_exprs in
+       process_impls name nameEnv
+         (List.append trigger_strs manual_triggers) body
+    | None ->
+      match EConstr.kind sigma t with
+      | Constr.Prod (b, tp, body) ->
+         if EConstr.Vars.noccurn sigma 1 body then
+           let (lhs, rhs) = to_equality nameEnv tp in
+           (* including $ to avoid clashes with Coq variable names *)
+           prefix ^"?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
+             process_impls name ("" :: nameEnv) manual_triggers body
+         else raise Unsupported (* foralls after impls are not supported *)
+      | _ ->
+         if i == 0 && List.length manual_triggers == 0 then
+           let (lhs, rhs) = to_equality nameEnv t in
+           stringify_equality_without_sideconds name nameEnv lhs rhs
+         else begin
+           Hashtbl.replace qnames name (List.rev nameEnv);
+           let (lhs, rhs) = to_equality nameEnv t in
+           let t = String.concat "" (List.mapi
+                     (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
+                     manual_triggers) in
+           prefix ^ t ^ "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n"
+           end in
+
   let rec process_foralls name nameEnv t =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
@@ -359,9 +382,7 @@ let eggify_hyp env sigma arities qnames exprs hyp =
          process_impls name nameEnv [] t
        else
          process_foralls name (binder_name_to_string b :: nameEnv) body
-    | _ ->
-       let (lhs, rhs) = to_equality nameEnv t in
-       stringify_equality_without_sideconds name nameEnv lhs rhs in
+    | _ -> process_impls name nameEnv [] t in
 
   let open Context in
   let open Named.Declaration in

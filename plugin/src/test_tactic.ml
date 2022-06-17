@@ -245,18 +245,9 @@ let rec process_expr env sigma arities nameEnv e =
         | Constr.App (f, args) -> begin
             (let arity = Array.length args in
              match EConstr.kind sigma f with
-             | Constr.Ind (i, univs) ->
-                (*let r = Names.GlobRef.IndRef i in
-                Printf.printf "%s :::" s;
-                let _ = has_implicit_args r in*)
-                let s = ind_to_str i in
-                register_arity arities s arity
-             | Constr.Const (c, univs) ->
-                (*let r = Names.GlobRef.ConstRef c in
-                Printf.printf "%s :::" s;
-                let _ = has_implicit_args r in*)
-                let s = const_to_str c in
-                register_arity arities s arity
+             | Constr.Ind (i, univs) -> register_arity arities (ind_to_str i) arity
+             | Constr.Construct (c, univs) -> register_arity arities (ctor_to_str c) arity
+             | Constr.Const (c, univs) -> register_arity arities (const_to_str c) arity
              | Constr.Var id -> register_arity arities (Names.Id.to_string id) arity
              | _ -> ());
             "(" ^ process_expr env sigma arities nameEnv f ^ " " ^
@@ -312,8 +303,8 @@ let rec count_leading_empty_strs l =
    exprs:    set (represented as Hashtbl with unit values) of extra expressions
              to add to the egraph
    name:     name of thm
-   term:     thm statement *)
-let eggify_thm env sigma arities qnames exprs name term =
+   hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
+let eggify_hyp env sigma arities qnames exprs hyp =
   let register_expr e = Hashtbl.replace exprs e () in
 
   let to_equality nameEnv t =
@@ -327,7 +318,7 @@ let eggify_thm env sigma arities qnames exprs name term =
     then (register_expr e1; register_expr e2) else ();
     (e1, e2) in
 
-  let rec process_impls nameEnv manual_triggers t =
+  let rec process_impls name nameEnv manual_triggers t =
     let i = count_leading_empty_strs nameEnv in
     let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
     prefix ^
@@ -337,12 +328,12 @@ let eggify_thm env sigma arities qnames exprs name term =
          match destruct_trigger sigma tp with
          | Some trigger_expr ->
             let trigger_str = process_expr env sigma arities nameEnv trigger_expr in
-            process_impls ("" :: nameEnv) (trigger_str :: manual_triggers) body
+            process_impls name ("" :: nameEnv) (trigger_str :: manual_triggers) body
          | None ->
            let (lhs, rhs) = to_equality nameEnv tp in
            (* including $ to avoid clashes with Coq variable names *)
            "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
-             process_impls ("" :: nameEnv) manual_triggers body
+             process_impls name ("" :: nameEnv) manual_triggers body
        else raise Unsupported (* foralls after impls are not supported *)
     | _ ->
        Hashtbl.replace qnames name (List.rev nameEnv);
@@ -352,30 +343,45 @@ let eggify_thm env sigma arities qnames exprs name term =
               manual_triggers) in
         t ^ "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
-  let rec process_foralls nameEnv t =
+  let stringify_equality_without_sideconds name nameEnv lhs rhs =
+    Hashtbl.replace qnames name (List.rev nameEnv);
+    if List.length nameEnv == 0 then
+      "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
+      "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
+    else
+      "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
+
+  let rec process_foralls name nameEnv t =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         process_impls nameEnv [] t
+         process_impls name nameEnv [] t
        else
-         process_foralls (binder_name_to_string b :: nameEnv) body
+         process_foralls name (binder_name_to_string b :: nameEnv) body
     | _ ->
-       begin
-         Hashtbl.replace qnames name (List.rev nameEnv);
-         let (lhs, rhs) = to_equality nameEnv t in
-         if List.length nameEnv == 0 then
-           "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
-           "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
-         else
-           "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n"
-       end in
+       let (lhs, rhs) = to_equality nameEnv t in
+       stringify_equality_without_sideconds name nameEnv lhs rhs in
 
-  process_foralls [] term
+  let open Context in
+  let open Named.Declaration in
+  match hyp with
+  | LocalAssum (id, t) -> begin
+      let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
+      if Termops.is_Prop sigma tp then
+        let name = Names.Id.to_string id.binder_name in
+        process_foralls name [] (EConstr.of_constr t)
+      else raise Unsupported
+    end
+  | LocalDef (id, t, _tp) -> begin
+     let name = Names.Id.to_string id.binder_name in
+     let rhs = process_expr env sigma arities [] (EConstr.of_constr t) in
+     register_expr name;
+     register_expr rhs;
+     stringify_equality_without_sideconds (name ^ "$def") [] name rhs
+    end
 
 let egg_simpl_goal () =
   Goal.enter begin fun gl ->
-    let open Context in
-    let open Named.Declaration in
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
     let hyps = Environ.named_context (Goal.env gl) in
@@ -385,20 +391,12 @@ let egg_simpl_goal () =
     let exprs = Hashtbl.create 20 in
     let rules_str = ref "" in
 
-    List.iter (function
-        | LocalAssum (id, t) -> begin
-            let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
-            if Termops.is_Prop sigma tp then
-              let name = Names.Id.to_string id.binder_name in
-              try
-                let rule = eggify_thm env sigma arities qnames exprs name
-                             (EConstr.of_constr t) in
-                rules_str := !rules_str ^ rule;
-              with
-                Unsupported -> ()
-            else ()
-          end
-        | LocalDef (id, c, t) -> ())
+    List.iter (fun hyp ->
+        try
+          let rule = eggify_hyp env sigma arities qnames exprs hyp in
+          rules_str := !rules_str ^ rule;
+        with
+          Unsupported -> ())
       (List.rev hyps);
 
     let g = process_expr env sigma arities [] (Goal.concl gl) in

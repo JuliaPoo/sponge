@@ -319,10 +319,10 @@ let eggify_thm env sigma arities qnames exprs name term =
   Hashtbl.replace triggers "Z_div_mul_lt" [];
   Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
  *)
-  Hashtbl.replace triggers "Z_mul_le" ["(Z.mul ?e1 ?e2)"];
+  Hashtbl.replace triggers "Z_mul_nonneg" ["(Z.mul ?e1 ?e2)"];
   Hashtbl.replace triggers "Z_div_pos" ["(Z.div ?a ?b)"];
   Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
-  Hashtbl.replace triggers "unsigned_nonneg" ["(unsigned ?x)"];
+  Hashtbl.replace triggers "wunsigned_nonneg" ["(@word.unsigned 64 word ?x)"];
   Hashtbl.replace triggers "Z_div_mul_lt" [];
 
   let register_expr e = Hashtbl.replace exprs e () in

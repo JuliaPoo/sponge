@@ -287,6 +287,21 @@ let destruct_eq sigma t =
       | _ -> None)
   | _ -> None
 
+let destruct_trigger sigma t =
+  match EConstr.kind sigma t with
+  | Constr.App (trg, args) ->
+     (match args with
+      | [| tp; x |] ->
+         (match EConstr.kind sigma trg with
+          | Constr.Const (c, univs) ->
+             let open Names in
+             if GlobRef.equal (Coqlib.lib_ref "egg.trigger") (GlobRef.ConstRef c)
+             then Some x
+             else None
+          | _ -> None)
+      | _ -> None)
+  | _ -> None
+
 let rec count_leading_empty_strs l =
   match l with
   | "" :: t -> 1 + count_leading_empty_strs t
@@ -299,32 +314,6 @@ let rec count_leading_empty_strs l =
    name:     name of thm
    term:     thm statement *)
 let eggify_thm env sigma arities qnames exprs name term =
-  (* TODO this map of triggers should not be hardcoded, but provided in the Coq
-     code by the user *)
-  (* When does a rule fire? In all cases, all hypotheses must appear in the egraph.
-     Additional conditions:
-     - If the conclusion is an equality: The lhs of the equality must appear in the egraph.
-     - If the conclusion is not an equality:
-       + If no triggers are registered:
-         The conclusion must appear in the egraph (often not the case!)
-       + If a list of triggers is registered: Each trigger expr must appear in the egraph. *)
-  let triggers = Hashtbl.create 20 in
-(*
-  Hashtbl.replace triggers "unsigned_of_Z" [];
-  Hashtbl.replace triggers "unsigned_sru_to_div_pow2" [];
-  Hashtbl.replace triggers "unsigned_slu_to_mul_pow2" [];
-  Hashtbl.replace triggers "Z_forget_mod_in_lt_l" [];
-  Hashtbl.replace triggers "Z_mul_le" [];
-  Hashtbl.replace triggers "Z_div_pos" [];
-  Hashtbl.replace triggers "Z_div_mul_lt" [];
-  Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
- *)
-  Hashtbl.replace triggers "Z_mul_nonneg" ["(Z.mul ?e1 ?e2)"];
-  Hashtbl.replace triggers "Z_div_pos" ["(Z.div ?a ?b)"];
-  Hashtbl.replace triggers "Z_lt_from_le_and_neq" [];
-  Hashtbl.replace triggers "wunsigned_nonneg" ["(@word.unsigned 64 word ?x)"];
-  Hashtbl.replace triggers "Z_div_mul_lt" [];
-
   let register_expr e = Hashtbl.replace exprs e () in
 
   let to_equality nameEnv t =
@@ -333,46 +322,45 @@ let eggify_thm env sigma arities qnames exprs name term =
          (process_expr env sigma arities nameEnv lhs,
           process_expr env sigma arities nameEnv rhs)
       | None ->
-         (process_expr env sigma arities nameEnv t, "True") in
+         ("True", process_expr env sigma arities nameEnv t) in
     if List.length nameEnv == count_leading_empty_strs nameEnv
     then (register_expr e1; register_expr e2) else ();
     (e1, e2) in
 
-  let rec process_impls nameEnv t =
+  let rec process_impls nameEnv manual_triggers t =
     let i = count_leading_empty_strs nameEnv in
     let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
     prefix ^
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         let (lhs, rhs) = to_equality nameEnv tp in
-         (* including $ to avoid clashes with Coq variable names *)
-         "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
-           process_impls ("" :: nameEnv) body
+         match destruct_trigger sigma tp with
+         | Some trigger_expr ->
+            let trigger_str = process_expr env sigma arities nameEnv trigger_expr in
+            process_impls ("" :: nameEnv) (trigger_str :: manual_triggers) body
+         | None ->
+           let (lhs, rhs) = to_equality nameEnv tp in
+           (* including $ to avoid clashes with Coq variable names *)
+           "?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
+             process_impls ("" :: nameEnv) manual_triggers body
        else raise Unsupported (* foralls after impls are not supported *)
     | _ ->
        Hashtbl.replace qnames name (List.rev nameEnv);
        let (lhs, rhs) = to_equality nameEnv t in
-       let o = Hashtbl.find_opt triggers name in
-       if Option.has_some o && rhs == "True" then
-         let t = String.concat ""
+        let t = String.concat ""
            (List.mapi (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
-              (Option.get o)) in
-         t ^ "?lhs$ = True\" => \"" ^ lhs ^ "\"),\n"
-       else
-         "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
+              manual_triggers) in
+        t ^ "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
 
   let rec process_foralls nameEnv t =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         process_impls nameEnv t
+         process_impls nameEnv [] t
        else
          process_foralls (binder_name_to_string b :: nameEnv) body
     | _ ->
-       if Option.has_some (Hashtbl.find_opt triggers name)
-       then process_impls nameEnv t
-       else begin
+       begin
          Hashtbl.replace qnames name (List.rev nameEnv);
          let (lhs, rhs) = to_equality nameEnv t in
          if List.length nameEnv == 0 then
@@ -380,7 +368,7 @@ let eggify_thm env sigma arities qnames exprs name term =
            "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
          else
            "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n"
-         end in
+       end in
 
   process_foralls [] term
 

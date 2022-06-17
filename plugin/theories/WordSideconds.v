@@ -42,8 +42,13 @@ Proof.
 Qed.
 
 Module Z.
-  Lemma mul_le : forall e1 e2 : Z, 0 <= e1 -> 0 <= e2 -> 0 <= e1 * e2.
-  Proof. intros. nia. Qed.
+  Lemma mul_nonneg : forall e1 e2 : Z,
+      trigger (e1 * e2) -> 0 <= e1 -> 0 <= e2 -> 0 <= e1 * e2.
+  Proof. intros. Lia.nia. Qed.
+
+  Lemma div_nonneg : forall a b : Z,
+      trigger (a / b) -> 0 <= a -> 0 < b -> 0 <= a / b.
+  Proof. intros. apply Z.div_pos; assumption. Qed.
 
   Lemma div_mul_lt: forall x d1 d2,
       0 < x ->
@@ -92,7 +97,7 @@ Section WithLib.
 
   Context (unsigned_of_Z: forall a, 0 <= a < 2 ^ 32 -> unsigned (ZToWord a) = a).
 
-  Context (unsigned_nonneg: forall x : word, 0 <= unsigned x)
+  Context (unsigned_nonneg: forall x : word, trigger (unsigned x) -> 0 <= unsigned x)
           (unsigned_sru_to_div_pow2: forall (x : word) (a : Z),
               0 <= a < 32 ->
               (unsigned (wsru x (ZToWord a))) = (unsigned x) / 2 ^ a)
@@ -123,8 +128,8 @@ equality as well, just in more steps
 
   Ltac pose_lib_lemmas :=
     pose proof Z.forget_mod_in_lt_l as Z_forget_mod_in_lt_l;
-    pose proof Z.mul_le as Z_mul_le;
-    pose proof Z.div_pos as Z_div_pos;
+    pose proof Z.mul_nonneg as Z_mul_nonneg;
+    pose proof Z.div_nonneg as Z_div_nonneg;
     pose proof Z.div_mul_lt as Z_div_mul_lt;
     pose proof Z.lt_from_le_and_neq as Z_lt_from_le_and_neq;
     pose proof @eq_eq_sym as H_eq_eq_sym.
@@ -150,9 +155,9 @@ equality as well, just in more steps
     rewrite unsigned_slu_to_mul_pow2 by exact C2.
     rewrite unsigned_sru_to_div_pow2 by exact C3.
 
-    pose proof (unsigned_nonneg (wsub x2 x1)) as p1.
-    pose proof (Z_div_pos (unsigned (wsub x2 x1)) (2 ^ 4) p1 C5) as p2.
-    pose proof (Z_mul_le (unsigned (wsub x2 x1) / 2 ^ 4) (2 ^ 3) p2 C4) as p3.
+    pose proof (unsigned_nonneg (wsub x2 x1) I) as p1.
+    pose proof (Z_div_nonneg (unsigned (wsub x2 x1)) (2 ^ 4) I p1 C5) as p2.
+    pose proof (Z_mul_nonneg (unsigned (wsub x2 x1) / 2 ^ 4) (2 ^ 3) I p2 C4) as p3.
     pose proof (eq_eq_sym (unsigned (wsub x2 x1)) 0) as q1.
     rewrite q1 in H0.
     pose proof (Z_lt_from_le_and_neq 0 (unsigned (wsub x2 x1)) p1 H0) as q2.

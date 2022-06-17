@@ -2,6 +2,7 @@
 -I src
 
 theories/Data.v
+theories/Egg.v
 theories/Loader.v
 theories/test.v
 theories/WordSideconds.v

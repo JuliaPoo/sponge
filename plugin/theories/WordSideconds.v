@@ -4,31 +4,6 @@ Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.PropExtensionality.
 Set Default Goal Selector "!".
 
-Lemma rew_zoom_fw{T: Type} {lhs rhs : T}:
-  lhs = rhs ->
-  forall P : T -> Prop, P lhs -> P rhs.
-Proof.
-  intros. subst. assumption.
-Qed.
-
-Lemma rew_zoom_bw{T: Type}{rhs lhs: T}:
-  lhs = rhs ->
-  forall P : T -> Type, P rhs -> P lhs.
-Proof.
-  intros. subst. assumption.
-Qed.
-
-Lemma invert_eq_True: forall (P: Prop), P = True -> P.
-Proof. intros; subst; auto. Qed.
-Lemma prove_eq_True: forall (P: Prop), P -> P = True.
-Proof.
-  intros. apply propositional_extensionality. split; auto.
-Qed.
-Lemma prove_True_eq: forall (P: Prop), P -> True = P.
-Proof.
-  intros. apply propositional_extensionality. split; auto.
-Qed.
-
 Lemma invert_eq_False: forall {P: Prop}, P = False -> ~ P.
 Proof. intros. intro C. subst. assumption. Qed.
 Lemma prove_eq_False: forall {P: Prop}, ~ P -> P = False.
@@ -172,7 +147,22 @@ equality as well, just in more steps
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
-    egg_simpl_goal.
+    egg_simpl_goal "/tmp/egg_proof.txt".
+
+unshelve (
+eapply (@rew_zoom_bw _ (wadd (wadd x1 (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) (wopp x1)) _ (wsub_def _ _) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (wadd (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)) x1) _ (wadd_comm _ _) (fun hole => (Z.lt (unsigned (wadd hole (wopp x1))) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (wadd (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)) (wadd x1 (wopp x1))) _ (wadd_to_right_assoc _ _ _) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (wadd (wadd x1 (wopp x1)) (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) _ (wadd_comm _ _) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (ZToWord 0) _ (wadd_opp _) (fun hole => (Z.lt (unsigned (wadd hole (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)))) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3)) _ (wadd_0_l _) (fun hole => (Z.lt (unsigned hole) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (Z.modulo (Z.mul (unsigned (wsru (wsub x2 x1) (ZToWord 4))) (Z.pow 2 3)) (Z.pow 2 32)) _ (unsigned_slu_to_mul_pow2 _ _ _) (fun hole => (Z.lt hole (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ (Z.div (unsigned (wsub x2 x1)) (Z.pow 2 4)) _ (unsigned_sru_to_div_pow2 _ _ _) (fun hole => (Z.lt (Z.modulo (Z.mul hole (Z.pow 2 3)) (Z.pow 2 32)) (Z.mul (unsigned (ZToWord 8)) (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_bw _ 8 _ (unsigned_of_Z _ _) (fun hole => (Z.lt (Z.modulo (Z.mul (Z.div (unsigned (wsub x2 x1)) (Z.pow 2 4)) (Z.pow 2 3)) (Z.pow 2 32)) (Z.mul hole (Z.of_nat (@length word x))))));
+eapply (@rew_zoom_fw _ (unsigned (wsub x2 x1)) _ H (fun hole => (Z.lt (Z.modulo (Z.mul (Z.div (unsigned (wsub x2 x1)) (Z.pow 2 4)) (Z.pow 2 3)) (Z.pow 2 32)) hole)));
+eapply (@rew_zoom_fw _ True _ (prove_True_eq _ (Z_forget_mod_in_lt_l _ _ _ _ _ _)) (fun hole => hole));
+idtac).
+
   Abort.
 
 (*

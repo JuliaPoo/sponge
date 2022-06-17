@@ -318,12 +318,13 @@ let rec count_leading_empty_strs l =
   | _ -> 0
 
 (* arities:  maps function symbols to the number of arguments they take
-   qnames    maps lemma names to their list of quantifier names, "" for hypotheses
+   qnames:   maps lemma names to their list of quantifier names, "" for hypotheses
+   is_eq:    maps lemma names to booleans indicating whether their conclusion is an equality
    exprs:    set (represented as Hashtbl with unit values) of extra expressions
              to add to the egraph
    name:     name of thm
    hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
-let eggify_hyp env sigma arities qnames exprs hyp =
+let eggify_hyp env sigma arities qnames is_eq exprs hyp =
   let register_expr e = Hashtbl.replace exprs e () in
 
   let to_equality nameEnv t =
@@ -339,6 +340,7 @@ let eggify_hyp env sigma arities qnames exprs hyp =
 
   let stringify_equality_without_sideconds name nameEnv lhs rhs =
     Hashtbl.replace qnames name (List.rev nameEnv);
+    Hashtbl.replace is_eq name (lhs != "True");
     if List.length nameEnv == 0 then
       "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
       "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
@@ -367,8 +369,9 @@ let eggify_hyp env sigma arities qnames exprs hyp =
            let (lhs, rhs) = to_equality nameEnv t in
            stringify_equality_without_sideconds name nameEnv lhs rhs
          else begin
-           Hashtbl.replace qnames name (List.rev nameEnv);
            let (lhs, rhs) = to_equality nameEnv t in
+           Hashtbl.replace qnames name (List.rev nameEnv);
+           Hashtbl.replace is_eq name (lhs != "True");
            let t = String.concat "" (List.mapi
                      (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
                      manual_triggers) in
@@ -402,7 +405,7 @@ let eggify_hyp env sigma arities qnames exprs hyp =
      stringify_equality_without_sideconds (name ^ "$def") [] name rhs
     end
 
-let egg_simpl_goal () =
+let egg_simpl_goal proof_file_path =
   Goal.enter begin fun gl ->
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
@@ -410,12 +413,13 @@ let egg_simpl_goal () =
 
     let arities = Hashtbl.create 20 in
     let qnames = Hashtbl.create 20 in
+    let is_eq = Hashtbl.create 20 in
     let exprs = Hashtbl.create 20 in
     let rules_str = ref "" in
 
     List.iter (fun hyp ->
         try
-          let rule = eggify_hyp env sigma arities qnames exprs hyp in
+          let rule = eggify_hyp env sigma arities qnames is_eq exprs hyp in
           rules_str := !rules_str ^ rule;
         with
           Unsupported -> ())
@@ -428,6 +432,9 @@ let egg_simpl_goal () =
 
     Printf.fprintf oc "\n#![allow(missing_docs,non_camel_case_types)]\n";
     Printf.fprintf oc "use crate ::*;\n";
+    Printf.fprintf oc "pub fn get_proof_file_path() -> &'static str {\n";
+    Printf.fprintf oc "  \"%s\"\n" proof_file_path;
+    Printf.fprintf oc "}\n";
 
     print_lang arities oc;
 
@@ -442,6 +449,17 @@ let egg_simpl_goal () =
     Printf.fprintf oc "  let v = vec![\n";
     Hashtbl.iter (fun l ns -> Printf.fprintf oc "    (\"%s\", %d),\n" l (List.length ns))
       qnames;
+    Printf.fprintf oc "  ];\n";
+    Printf.fprintf oc "  let o = v.iter().find(|t| t.0 == name);\n";
+    Printf.fprintf oc "  match o {\n";
+    Printf.fprintf oc "    Some((_, n)) => { return Some(*n); }\n";
+    Printf.fprintf oc "    None => { return None; }\n";
+    Printf.fprintf oc "  }\n";
+    Printf.fprintf oc "}\n\n";
+
+    Printf.fprintf oc "pub fn is_eq(name: &str) -> Option<bool> {\n";
+    Printf.fprintf oc "  let v = vec![\n";
+    Hashtbl.iter (fun l b -> Printf.fprintf oc "    (\"%s\", %b),\n" l b) is_eq;
     Printf.fprintf oc "  ];\n";
     Printf.fprintf oc "  let o = v.iter().find(|t| t.0 == name);\n";
     Printf.fprintf oc "  match o {\n";

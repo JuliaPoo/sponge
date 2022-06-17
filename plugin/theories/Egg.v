@@ -30,3 +30,30 @@ Proof. reflexivity. Abort.
 
 Goal (forall a b : nat, trigger! ((a * b) (b * a)) (0 <= a -> 0 <= b -> 0 <= a * b)).
 Abort.
+
+
+Lemma rew_zoom_fw{T: Type} {lhs rhs : T}:
+  lhs = rhs ->
+  forall P : T -> Prop, P lhs -> P rhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+Lemma rew_zoom_bw{T: Type}{rhs lhs: T}:
+  lhs = rhs ->
+  forall P : T -> Type, P rhs -> P lhs.
+Proof.
+  intros. subst. assumption.
+Qed.
+
+Require Import Coq.Logic.PropExtensionality.
+
+Lemma prove_eq_True: forall (P: Prop), P -> P = True.
+Proof.
+  intros. apply propositional_extensionality. split; auto.
+Qed.
+
+Lemma prove_True_eq: forall (P: Prop), P -> True = P.
+Proof.
+  intros. apply propositional_extensionality. split; auto.
+Qed.

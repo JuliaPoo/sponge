@@ -33,8 +33,8 @@ TACTIC EXTEND collapse_hyps
 END
 
 TACTIC EXTEND egg_simpl_goal
-| [ "egg_simpl_goal" ] ->
-  { Test_tactic.egg_simpl_goal () }
+| [ "egg_simpl_goal" string(output_file_path) ] ->
+  { Test_tactic.egg_simpl_goal output_file_path }
 END
 
 (* More advanced examples, where automatic proof happens but

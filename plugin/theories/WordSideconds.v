@@ -117,6 +117,18 @@ equality as well, just in more steps
       unsigned (wsub (wadd x1 (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) x1) <
         unsigned (ZToWord 8) * Z.of_nat (length x).
 
+  Lemma bsearch_goal1_proof_with_transitivity: bsearch_goal1.
+  Proof.
+    unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
+    clear Z_forget_mod_in_lt_l.
+    pose proof Z.le_lt_trans as Z_le_lt_trans.
+    pose proof Z.mod_le as Z_mod_le.
+    egg_simpl_goal "/tmp/egg_proof.txt".
+    1: exact C1.
+    4: exact I.
+    (* transitivity leads to uninferrable evars! *)
+  Abort.
+
   Lemma bsearch_goal1_proof_without_transitivity: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.

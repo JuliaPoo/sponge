@@ -21,12 +21,12 @@ type rule =
 type query_accumulator =
   { declarations: (string, int) Hashtbl.t; (* arity of each function symbol *)
     rules: rule Queue.t;
-    initial_exprs: Sexp.t Queue.t }
+    initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
 let empty_query_accumulator () =
   { declarations = Hashtbl.create 20;
     rules = Queue.create ();
-    initial_exprs = Queue.create () }
+    initial_exprs = Hashtbl.create 20 }
 
 let make_rust_valid s =
   Str.global_replace (Str.regexp "@") "AT" (Str.global_replace (Str.regexp "\\.") "DOT" s)
@@ -66,6 +66,13 @@ module type BACKEND =
     val close: t -> unit
   end
 
+let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) =
+  let m = B.create () in
+  Hashtbl.iter (B.declare_fun m) qa.declarations;
+  Queue.iter (B.declare_rule m) qa.rules;
+  Hashtbl.iter (fun e () -> B.declare_initial_expr m e) qa.initial_exprs;
+  m
+
 (* Once created, supports interactions satisfying the following regex:
 ( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove_equal ); reset )
 and the close at the end is optional a no-op. *)
@@ -81,42 +88,39 @@ module RecompilationBackend : BACKEND = struct
     if needs_multipattern r then (
       Buffer.add_string buf {|    coq_rewrite!("|};
       Buffer.add_string buf r.rulename;
-      Buffer.add_string buf {|", "|};
+      Buffer.add_string buf {|"; "|};
       List.iteri (fun i sc ->
-          Buffer.add_string buf "$hyp";
+          Buffer.add_string buf "?$hyp";
           Buffer.add_string buf (string_of_int i);
           Buffer.add_string buf " = ";
-          (match sc with
-           | AEq (lhs, rhs) ->
-              Sexp.to_buffer ~buf lhs;
-              Buffer.add_string buf " = ";
-              Sexp.to_buffer ~buf rhs;
-           | AProp e ->
-              Sexp.to_buffer ~buf e);
+          let (lhs, rhs) = assertion_to_equality sc in
+          Sexp.to_buffer ~buf lhs;
+          Buffer.add_string buf " = ";
+          Sexp.to_buffer ~buf rhs;
           Buffer.add_string buf ", ";
         ) r.sideconditions;
       List.iteri (fun i tr ->
-          Buffer.add_string buf "$trigger";
+          Buffer.add_string buf "?$trigger";
           Buffer.add_string buf (string_of_int i);
           Buffer.add_string buf " = ";
           Sexp.to_buffer ~buf tr;
           Buffer.add_string buf ", "
         ) r.triggers;
       let (lhs, rhs) = assertion_to_equality r.conclusion in
-      Buffer.add_string buf "$lhs = ";
+      Buffer.add_string buf "?$lhs = ";
       Sexp.to_buffer ~buf lhs;
       Buffer.add_string buf {|" => "|};
       Sexp.to_buffer ~buf rhs;
-      Buffer.add_string buf "\");\n"
+      Buffer.add_string buf "\"),\n"
     ) else (
       Buffer.add_string buf {|    rewrite!("|};
       Buffer.add_string buf r.rulename;
-      Buffer.add_string buf {|", "|};
+      Buffer.add_string buf {|"; "|};
       let (lhs, rhs) = assertion_to_equality r.conclusion in
       Sexp.to_buffer ~buf lhs;
       Buffer.add_string buf {|" => "|};
       Sexp.to_buffer ~buf rhs;
-      Buffer.add_string buf "\");\n"
+      Buffer.add_string buf "\"),\n"
     )
 
   type state =
@@ -155,7 +159,7 @@ end;
     match t.state with
     | SDeclaringFuns ->
        Buffer.add_string t.buf
-         (Printf.sprintf {|    "%s" = %s([Id; %d]),\n|} fname (make_rust_valid fname) arity)
+         (Printf.sprintf "    \"%s\" = %s([Id; %d]),\n" fname (make_rust_valid fname) arity)
     | _ -> failwith "invalid state machine transition"
 
   let declare_rule t rule =
@@ -183,7 +187,7 @@ end
        | AProp _ -> "\", false),\n");
     Buffer.add_string t.lemma_arity_buf {|    ("|};
     Buffer.add_string t.lemma_arity_buf rule.rulename;
-    Buffer.add_string t.lemma_arity_buf ", ";
+    Buffer.add_string t.lemma_arity_buf "\", ";
     Buffer.add_string t.lemma_arity_buf (string_of_int (List.length rule.quantifiers));
     Buffer.add_string t.lemma_arity_buf "),\n"
 
@@ -212,7 +216,14 @@ pub fn is_eq(name: &str) -> Option<bool> {
   let v = vec![
 |};
 Buffer.add_buffer t.buf t.is_eq_buf;
-Buffer.add_string t.buf {|
+Buffer.add_string t.buf {|  ];
+  let o = v.iter().find(|t| t.0 == name);
+  match o {
+    Some((_, n)) => { return Some(*n); }
+    None => { return None; }
+  }
+}
+
 #[allow(unused_variables)]
 pub fn run_simplifier(f_simplify : fn(&str, Vec<&str>) -> (), f_prove : fn(&str, &str, Vec<&str>) -> ()) {
   let es = vec![
@@ -380,7 +391,7 @@ let rec process_expr env sigma arities nameEnv e =
     a ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
-  try Stdlib.string_of_int (z_to_int sigma e)
+  try Sexp.Atom (Stdlib.string_of_int (z_to_int sigma e))
   with NotACoqNumber ->
         match EConstr.kind sigma e with
         | Constr.App (f, args) -> begin
@@ -391,16 +402,16 @@ let rec process_expr env sigma arities nameEnv e =
              | Constr.Const (c, univs) -> register_arity arities (const_to_str c) arity
              | Constr.Var id -> register_arity arities (Names.Id.to_string id) arity
              | _ -> ());
-            "(" ^ process_expr env sigma arities nameEnv f ^ " " ^
-              String.concat " " (List.map (process_expr env sigma arities nameEnv)
-                                   (Array.to_list args)) ^ ")"
+            Sexp.List (process_expr env sigma arities nameEnv f ::
+                         List.map (process_expr env sigma arities nameEnv)
+                           (Array.to_list args))
           end
-        | Constr.Rel i -> "?" ^ lookup_name nameEnv i
-        | Constr.Var id -> Names.Id.to_string id
-        | Constr.Ind (i, univs) -> ind_to_str i
-        | Constr.Const (c, univs) -> const_to_str c
-        | Constr.Construct (ctor, univs) -> ctor_to_str ctor
-        | Constr.Sort s -> sort_to_str s
+        | Constr.Rel i -> Sexp.Atom ("?" ^ lookup_name nameEnv i)
+        | Constr.Var id -> Sexp.Atom (Names.Id.to_string id)
+        | Constr.Ind (i, univs) -> Sexp.Atom (ind_to_str i)
+        | Constr.Const (c, univs) -> Sexp.Atom (const_to_str c)
+        | Constr.Construct (ctor, univs) -> Sexp.Atom (ctor_to_str ctor)
+        | Constr.Sort s -> Sexp.Atom (sort_to_str s)
         | _ -> raise Unsupported
 
 let destruct_eq sigma t =
@@ -454,75 +465,53 @@ let rec count_leading_empty_strs l =
   | "" :: t -> 1 + count_leading_empty_strs t
   | _ -> 0
 
-(* arities:  maps function symbols to the number of arguments they take
-   qnames:   maps lemma names to their list of quantifier names, "" for hypotheses
-   is_eq:    maps lemma names to booleans indicating whether their conclusion is an equality
-   exprs:    set (represented as Hashtbl with unit values) of extra expressions
-             to add to the egraph
-   name:     name of thm
-   hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
-let eggify_hyp env sigma arities qnames is_eq exprs hyp =
-  let register_expr e = Hashtbl.replace exprs e () in
+(* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
+let eggify_hyp env sigma (qa: query_accumulator) hyp =
+  let register_expr e = Hashtbl.replace qa.initial_exprs e () in
 
-  let to_equality nameEnv t =
-    let e1, e2 = match destruct_eq sigma t with
+  let to_assertion nameEnv t =
+    let e1, e2, res = match destruct_eq sigma t with
       | Some (_, lhs, rhs) ->
-         (process_expr env sigma arities nameEnv lhs,
-          process_expr env sigma arities nameEnv rhs)
+         let lhs' = process_expr env sigma qa.declarations nameEnv lhs in
+         let rhs' = process_expr env sigma qa.declarations nameEnv rhs in
+         (lhs', rhs', AEq (lhs', rhs'))
       | None ->
-         ("True", process_expr env sigma arities nameEnv t) in
+         let lhs' = Sexp.Atom "True" in
+         let rhs' = process_expr env sigma qa.declarations nameEnv t in
+         (lhs', rhs', AProp rhs') in
     if List.length nameEnv == count_leading_empty_strs nameEnv
     then (register_expr e1; register_expr e2) else ();
-    (e1, e2) in
+    res in
 
-  let stringify_equality_without_sideconds name nameEnv lhs rhs =
-    Hashtbl.replace qnames name (List.rev nameEnv);
-    Hashtbl.replace is_eq name (lhs != "True");
-    if List.length nameEnv == 0 then
-      "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" ^
-      "    rewrite!(\"" ^ name ^ "-rev\"; \"" ^ rhs ^ "\" => \"" ^ lhs ^ "\"),\n"
-    else
-      "    rewrite!(\"" ^ name ^ "\"; \"" ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n" in
-
-  let rec process_impls name nameEnv manual_triggers t =
+  let rec process_impls name nameEnv sideconditions manual_triggers t =
     let i = count_leading_empty_strs nameEnv in
-    let prefix = if i == 0 then "    coq_rewrite!(\"" ^ name ^ "\"; \"" else "" in
     match destruct_trigger sigma t with
-    | Some (trigger_exprs, body) ->
-       let trigger_strs = List.map (process_expr env sigma arities nameEnv) trigger_exprs in
-       process_impls name nameEnv
-         (List.append trigger_strs manual_triggers) body
+    | Some (tr_exprs, body) ->
+       let tr_sexprs = List.map (process_expr env sigma qa.declarations nameEnv) tr_exprs in
+       process_impls name nameEnv sideconditions (List.append manual_triggers tr_sexprs) body
     | None ->
       match EConstr.kind sigma t with
       | Constr.Prod (b, tp, body) ->
          if EConstr.Vars.noccurn sigma 1 body then
-           let (lhs, rhs) = to_equality nameEnv tp in
-           (* including $ to avoid clashes with Coq variable names *)
-           prefix ^"?hyp$" ^ (Stdlib.string_of_int i) ^ " = " ^ lhs ^ " = " ^ rhs ^ ", " ^
-             process_impls name ("" :: nameEnv) manual_triggers body
+           let side = to_assertion nameEnv tp in
+           process_impls name ("" :: nameEnv) (side :: sideconditions) manual_triggers body
          else raise Unsupported (* foralls after impls are not supported *)
-      | _ ->
-         if i == 0 && List.length manual_triggers == 0 then
-           let (lhs, rhs) = to_equality nameEnv t in
-           stringify_equality_without_sideconds name nameEnv lhs rhs
-         else begin
-           let (lhs, rhs) = to_equality nameEnv t in
-           Hashtbl.replace qnames name (List.rev nameEnv);
-           Hashtbl.replace is_eq name (lhs != "True");
-           let t = String.concat "" (List.mapi
-                     (fun i e -> "?trigger$" ^ (Stdlib.string_of_int i) ^ " = " ^ e ^ ", ")
-                     manual_triggers) in
-           prefix ^ t ^ "?lhs$ = " ^ lhs ^ "\" => \"" ^ rhs ^ "\"),\n"
-           end in
+      | _ -> Queue.push {
+                 rulename = name;
+                 quantifiers = List.rev nameEnv;
+                 sideconditions = List.rev sideconditions;
+                 conclusion = to_assertion nameEnv t;
+                 triggers = manual_triggers;
+               } qa.rules in
 
   let rec process_foralls name nameEnv t =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         process_impls name nameEnv [] t
+         process_impls name nameEnv [] [] t
        else
          process_foralls name (binder_name_to_string b :: nameEnv) body
-    | _ -> process_impls name nameEnv [] t in
+    | _ -> process_impls name nameEnv [] [] t in
 
   let open Context in
   let open Named.Declaration in
@@ -535,11 +524,16 @@ let eggify_hyp env sigma arities qnames is_eq exprs hyp =
       else raise Unsupported
     end
   | LocalDef (id, t, _tp) -> begin
-     let name = Names.Id.to_string id.binder_name in
-     let rhs = process_expr env sigma arities [] (EConstr.of_constr t) in
-     register_expr name;
-     register_expr rhs;
-     stringify_equality_without_sideconds (name ^ "$def") [] name rhs
+      let name = Names.Id.to_string id.binder_name in
+      let lhs = Sexp.Atom name in
+      let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
+      register_expr lhs;
+      register_expr rhs;
+      Queue.push { rulename = name ^ "$def";
+                   quantifiers = [];
+                   sideconditions = [];
+                   conclusion = AEq (lhs, rhs);
+                   triggers = [] } qa.rules
     end
 
 let egg_simpl_goal () =
@@ -548,111 +542,24 @@ let egg_simpl_goal () =
     let env = Goal.env gl in
     let hyps = Environ.named_context (Goal.env gl) in
 
-    let arities = Hashtbl.create 20 in
-    let qnames = Hashtbl.create 20 in
-    let is_eq = Hashtbl.create 20 in
-    let exprs = Hashtbl.create 20 in
-    let rules_str = ref "" in
+    let qa = empty_query_accumulator () in
 
     List.iter (fun hyp ->
-        try
-          let rule = eggify_hyp env sigma arities qnames is_eq exprs hyp in
-          rules_str := !rules_str ^ rule;
-        with
-          Unsupported -> ())
+        try eggify_hyp env sigma qa hyp
+        with Unsupported -> ())
       (List.rev hyps);
 
-    let g = process_expr env sigma arities [] (Goal.concl gl) in
-
-    let egg_repo_path = "/home/sam/git/clones/egg" (* adapt as needed *) in
-    let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
-    let oc = open_out rust_rules_path in
-
-    Printf.fprintf oc "\n#![allow(missing_docs,non_camel_case_types)]\n";
-    Printf.fprintf oc "use crate ::*;\n";
-    Printf.fprintf oc "pub fn get_proof_file_path() -> &'static str {\n";
-    Printf.fprintf oc "  \"%s\"\n" proof_file_path;
-    Printf.fprintf oc "}\n";
-
-    print_lang arities oc;
-
-    Printf.fprintf oc "pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {\n";
-    Printf.fprintf oc "  let v  : Vec<Rewrite<CoqSimpleLanguage, ()>> = vec![\n";
-    Printf.fprintf oc "%s" !rules_str;
-    Printf.fprintf oc "  ];\n";
-    Printf.fprintf oc "  v\n";
-    Printf.fprintf oc "}\n\n";
-
-    Printf.fprintf oc "pub fn get_lemma_arity(name: &str) -> Option<usize> {\n";
-    Printf.fprintf oc "  let v = vec![\n";
-    Hashtbl.iter (fun l ns -> Printf.fprintf oc "    (\"%s\", %d),\n" l (List.length ns))
-      qnames;
-    Printf.fprintf oc "  ];\n";
-    Printf.fprintf oc "  let o = v.iter().find(|t| t.0 == name);\n";
-    Printf.fprintf oc "  match o {\n";
-    Printf.fprintf oc "    Some((_, n)) => { return Some(*n); }\n";
-    Printf.fprintf oc "    None => { return None; }\n";
-    Printf.fprintf oc "  }\n";
-    Printf.fprintf oc "}\n\n";
-
-    Printf.fprintf oc "pub fn is_eq(name: &str) -> Option<bool> {\n";
-    Printf.fprintf oc "  let v = vec![\n";
-    Hashtbl.iter (fun l b -> Printf.fprintf oc "    (\"%s\", %b),\n" l b) is_eq;
-    Printf.fprintf oc "  ];\n";
-    Printf.fprintf oc "  let o = v.iter().find(|t| t.0 == name);\n";
-    Printf.fprintf oc "  match o {\n";
-    Printf.fprintf oc "    Some((_, n)) => { return Some(*n); }\n";
-    Printf.fprintf oc "    None => { return None; }\n";
-    Printf.fprintf oc "  }\n";
-    Printf.fprintf oc "}\n\n";
-
-    Printf.fprintf oc "#[allow(unused_variables)]\n";
-    Printf.fprintf oc "pub fn run_simplifier(f_simplify : fn(&str, Vec<&str>) -> (), f_prove : fn(&str, &str, Vec<&str>) -> ()) {\n";
-    Printf.fprintf oc "  let st : &str = \"%s\";\n" g;
-    Printf.fprintf oc "  let es = vec![\n";
-    Hashtbl.iter (fun e _ -> Printf.fprintf oc "    \"%s\",\n" e) exprs;
-    Printf.fprintf oc "  ];\n";
-    Printf.fprintf oc "  f_simplify(st, es);\n";
-    Printf.fprintf oc "}\n\n";
-
-    close_out oc;
-    Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
-    flush stdout;
-
-    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run coq" in
-    let status = Sys.command cargo_command in
-    Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
-    if status != 0 then
-      Tacticals.tclZEROMSG (Pp.str "invoking rust failed")
-    else begin
-        let exp1 = Sexp.(List [
-                             Atom "This";
-                             List [Atom "is"; Atom "an"];
-                             List [Atom "s"; Atom "expression"]
-                   ]) in
-        (* Serialize an Sexp object into a string *)
-        print_endline (Sexp.to_string exp1);
-        (* Parse a string and produce a Sexp object  *)
-        let exp2 = Sexp.of_string "(This (is an) (s expression to be parsed))" in
-        print_endline (Sexp.to_string_hum exp2);
-
-        let reversed_pf = proof_file_to_reversed_list proof_file_path parse_constr_expr in
-        let composed_pf = compose_constr_expr_proofs reversed_pf in
-        print_endline "Composed proof:";
-        print_endline (print_constr_expr env sigma composed_pf);
-        Refine.refine ~typecheck:true (fun sigma ->
-          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          Feedback.msg_notice
-            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          (sigma, constr_pf))
-
-        (*
-        print_endline "Proof as constr_exprs:";
-        List.iter (fun e -> print_endline (print_constr_expr env sigma e)) pf;
-        print_endline "";
-         *)
-
-      end;
+    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+    let b = apply_query_accumulator qa (module Backend) in
+    let reversed_pf = List.rev (Backend.minimize b g) in
+    let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+    print_endline "Composed proof:";
+    print_endline (print_constr_expr env sigma composed_pf);
+    Refine.refine ~typecheck:true (fun sigma ->
+        let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+        Feedback.msg_notice
+          Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+        (sigma, constr_pf))
     end
 
 let kind_to_str sigma c =

@@ -27,11 +27,6 @@ VERNAC COMMAND EXTEND ShowOneConstruction CLASSIFIED AS QUERY
 | [ "Test3_2" ] -> { example_sort_app_lambda () }
 END
 
-TACTIC EXTEND collapse_hyps
-| [ "pack" "hypothesis" ident(i) ] ->
-  { Test_tactic.pack_tactic i }
-END
-
 TACTIC EXTEND egg_simpl_goal
 | [ "egg_simpl_goal" string(output_file_path) ] ->
   { Test_tactic.egg_simpl_goal output_file_path }

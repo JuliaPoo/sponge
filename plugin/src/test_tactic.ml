@@ -143,6 +143,44 @@ let pack_tactic i =
              (Tactics.move_hyp h_hyps_id Logic.MoveLast))
     end
 
+let proof_file_to_reversed_list filepath f =
+  let res = ref [] in
+  let chan = open_in filepath in
+  let _discard_unshelve = input_line chan in
+  let line = ref (input_line chan) in
+  (try
+     while not (String.starts_with ~prefix:"idtac" !line); do
+       if String.starts_with ~prefix:"eapply " !line &&
+            String.ends_with ~suffix:";" !line
+       then
+         let c = String.sub !line 7 (String.length !line - 8) in
+         res := f c :: !res;
+         line := input_line chan
+       else
+         failwith ("expected 'eapply (...)', but got '" ^ !line ^ "'")
+     done
+   with End_of_file -> ());
+  close_in chan;
+  !res
+
+let parse_constr_expr s =
+  Pcoq.parse_string Pcoq.Constr.constr s
+
+let print_constr_expr env sigma e =
+  Pp.string_of_ppcmds (Ppconstr.pr_constr_expr env sigma e)
+
+let mkCApp f args =
+  Constrexpr_ops.mkAppC (f, args)
+
+let cHole = CAst.make (Constrexpr.CHole (None, Namegen.IntroAnonymous, None))
+
+let compose_constr_expr_proofs revlist =
+  let rec f revlist acc =
+    match revlist with
+    | [] -> acc
+    | h :: t -> f t (mkCApp h [acc]) in
+  f revlist cHole
+
 let binder_name_to_string b =
   let open Context in
   Pp.string_of_ppcmds (Names.Name.print b.binder_name)
@@ -498,6 +536,57 @@ let egg_simpl_goal proof_file_path =
         (* Parse a string and produce a Sexp object  *)
         let exp2 = Sexp.of_string "(This (is an) (s expression to be parsed))" in
         print_endline (Sexp.to_string_hum exp2);
-        Proofview.tclUNIT ()
+
+        let reversed_pf = proof_file_to_reversed_list proof_file_path parse_constr_expr in
+        let composed_pf = compose_constr_expr_proofs reversed_pf in
+        print_endline "Composed proof:";
+        print_endline (print_constr_expr env sigma composed_pf);
+        Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          Feedback.msg_notice
+            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          (sigma, constr_pf))
+
+        (*
+        print_endline "Proof as constr_exprs:";
+        List.iter (fun e -> print_endline (print_constr_expr env sigma e)) pf;
+        print_endline "";
+         *)
+
       end;
+    end
+
+let kind_to_str sigma c =
+  match EConstr.kind sigma c with
+  | Constr.Rel i -> "Rel"
+  | Constr.Var x -> "Var"
+  | Constr.Meta m -> "Meta"
+  | Constr.Evar ex -> "Evar"
+  | Constr.Sort s -> "Sort"
+  | Constr.Cast (c, k, t) -> "Cast"
+  | Constr.Prod (b, t, body) -> "Prod"
+  | Constr.Lambda (b, t, body) -> "Lambda"
+  | Constr.LetIn (b, rhs, t, body) -> "LetIn"
+  | Constr.App (f, args) -> "App"
+  | Constr.Const (c, u) -> "Const"
+  | Constr.Ind (i, u) -> "Ind"
+  | Constr.Construct (c, u) -> "Construct"
+  | Constr.Case (c, u, b, r, d, x, y) -> "Case"
+  | Constr.Fix f -> "Fix"
+  | Constr.CoFix f -> "CoFix"
+  | Constr.Proj (p, c) -> "Proj"
+  | Constr.Int i -> "Int"
+  | Constr.Float f -> "Float"
+  | Constr.Array (u, a, b, c) -> "Array"
+
+let inspect c =
+  Goal.enter begin fun gl ->
+    let sigma = Tacmach.project gl in
+    (match EConstr.kind sigma c with
+     | Constr.App (f, args) ->
+        (match args with
+         | [| tp; arg |] -> Printf.printf "It's a %s\n" (kind_to_str sigma arg)
+         | _ -> Printf.printf "unexpected")
+     | _ -> Printf.printf "unexpected");
+    Proofview.tclUNIT ()
     end

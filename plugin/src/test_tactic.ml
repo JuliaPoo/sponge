@@ -9,7 +9,7 @@ type assertion =
 let assertion_to_equality a =
   match a with
   | AEq (lhs, rhs) -> (lhs, rhs)
-  | AProp e -> (Sexp.Atom "True", e)
+  | AProp e -> (Sexp.Atom "&True", e)
 
 type rule =
   { rulename: string;
@@ -24,12 +24,19 @@ type query_accumulator =
     initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
 let empty_query_accumulator () =
-  { declarations = Hashtbl.create 20;
+  let ds = Hashtbl.create 20 in
+  (* always-present constants (even if they don't appear in any expression) *)
+  Hashtbl.replace ds "&True" 0;
+  Hashtbl.replace ds "&False" 0;
+  { declarations = ds;
     rules = Queue.create ();
     initial_exprs = Hashtbl.create 20 }
 
+(* only needed to create valid Rust enum names, not needed to translate back *)
 let make_rust_valid s =
-  Str.global_replace (Str.regexp "@") "AT" (Str.global_replace (Str.regexp "\\.") "DOT" s)
+  Str.global_replace (Str.regexp "@") "AT"
+    (Str.global_replace (Str.regexp "\\.") "DOT"
+       (Str.global_replace (Str.regexp "&") "ID" s))
 
 let proof_file_to_reversed_list filepath f =
   let res = ref [] in
@@ -53,6 +60,50 @@ let proof_file_to_reversed_list filepath f =
 
 let proof_file_path = "/tmp/egg_proof.txt"
 
+let assertion_to_smtlib a =
+  match a with
+  | AEq (lhs, rhs) -> Sexp.List [Sexp.Atom "="; lhs; rhs]
+  | AProp e -> (* e is of type U, but we need to convert it to `Bool`: *)
+     Sexp.List [Sexp.Atom "="; Sexp.Atom "&True"; e]
+
+(* (! body tag value) *)
+let smtlib_annot body tag value =
+  Sexp.List [Sexp.Atom "!"; body; Sexp.Atom tag; value]
+
+(* (assert (! body :named name)) *)
+let smtlib_assert_named name body =
+  Sexp.List [Sexp.Atom "assert"; smtlib_annot body ":named" (Sexp.Atom name)]
+
+(* (forall ((x1 U) .. (xN U)) body) *)
+let smtlib_forall varnames body =
+  match varnames with
+  | _ :: _ ->
+     let qs = List.map (fun x -> Sexp.List [Sexp.Atom ("?" ^ x); Sexp.Atom "$U"]) varnames in
+     Sexp.List [Sexp.Atom "forall"; Sexp.List qs; body]
+  | [] -> body
+
+(* (! body :pattern (tr1 .. trN)) *)
+let smtlib_pattern triggers body =
+  match triggers with
+  | _ :: _ -> smtlib_annot body ":pattern" (Sexp.List triggers)
+  | [] -> body
+
+(* (=> hyp1 .. hypN concl) *)
+let smtlib_impls hyps concl =
+  match hyps with
+  | _ :: _ -> Sexp.List (Sexp.Atom "=>" :: List.append hyps [concl])
+  | [] -> concl
+
+let smtlib_rule r =
+  smtlib_assert_named r.rulename
+    (smtlib_forall r.quantifiers
+       (smtlib_pattern r.triggers
+          (smtlib_impls (List.map assertion_to_smtlib r.sideconditions)
+             (assertion_to_smtlib r.conclusion))))
+
+let smtlib_initial_expr e =
+  Sexp.List [Sexp.Atom "assert"; (Sexp.List [Sexp.Atom "$initial"; e])]
+
 module type BACKEND =
   sig
     type t
@@ -61,10 +112,77 @@ module type BACKEND =
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
     val minimize: t -> Sexp.t -> string list
-    val prove_equal: t -> Sexp.t -> Sexp.t -> string list option
+    val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
   end
+
+module FileBasedSmtBackend : BACKEND = struct
+  type t = out_channel option ref
+
+  let smt_file_path = "/tmp/egraph_query.smt2"
+
+  let new_output_file () =
+    let oc = open_out smt_file_path in
+    Printf.fprintf oc "(set-logic UF)\n";
+    Printf.fprintf oc "(set-option :produce-proofs true)\n";
+    (* U stands for "Universe", the only sort *)
+    Printf.fprintf oc "(declare-sort $U 0)\n";
+    (* to mark initial expressions to be used for saturation *)
+    Printf.fprintf oc "(declare-fun $initial ($U) Bool)\n";
+    (* Note: in smtlib, there's already a constant `true` of sort `Bool`, but
+       we need our own `True` of sort `U` to make sure it's comparable
+       to what our untyped functions return *)
+    oc
+
+  let create () = ref (Some (new_output_file ()))
+
+  let declare_fun t fname arity =
+    let oc = Option.get !t in
+    let args = String.concat " " (List.init arity (fun _ -> "$U")) in
+    Printf.fprintf oc "(declare-fun %s (%s) $U)\n" fname args
+
+  let declare_rule t r =
+    let oc = Option.get !t in
+    Sexp.output_hum oc (smtlib_rule r);
+    Printf.fprintf oc "\n"
+
+  let declare_initial_expr t e =
+    let oc = Option.get !t in
+    Sexp.output_hum oc (smtlib_initial_expr e);
+    Printf.fprintf oc "\n"
+
+  let minimize t e =
+    failwith "not supported"
+
+  let prove t a =
+    let oc = Option.get !t in
+    Sexp.output_hum oc (Sexp.List [Sexp.Atom "assert";
+                                   Sexp.List [Sexp.Atom "not"; (assertion_to_smtlib a)]]);
+    Printf.fprintf oc "\n";
+    Printf.fprintf oc "(check-sat)\n";
+    (*Printf.fprintf oc "(get-proof)\n"; (* quite verbose *) *)
+    close_out oc;
+    t := None;
+    Printf.printf "Wrote %s\n" smt_file_path;
+    flush stdout;
+    let command = "time cvc5 --tlimit=1000 " ^ smt_file_path in
+    let status = Sys.command command in
+    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    None
+
+  let reset t =
+    (match !t with
+     | Some oc -> close_out oc
+     | None -> ());
+    t := Some (new_output_file ())
+
+  let close t =
+    match !t with
+    | Some oc -> close_out oc
+    | None -> ()
+
+end
 
 let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) =
   let m = B.create () in
@@ -74,7 +192,7 @@ let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) =
   m
 
 (* Once created, supports interactions satisfying the following regex:
-( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove_equal ); reset )
+( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove ); reset )
 and the close at the end is optional a no-op. *)
 module RecompilationBackend : BACKEND = struct
   let needs_multipattern r =
@@ -148,7 +266,6 @@ Buffer.add_string buf {|"
 }
 define_language! {
   pub enum CoqSimpleLanguage {
-    Num(i32),
 |}
 end;
     let lemma_arity_buf = Buffer.create 1000 in
@@ -167,9 +284,7 @@ end;
      | SDeclaringFuns ->
         t.state <- SDeclaringRules;
 begin
-Buffer.add_string t.buf
-{|    Symbol(Symbol),
-  }
+Buffer.add_string t.buf {|  }
 }
 
 pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {
@@ -261,7 +376,7 @@ end
     let reversed_pf = proof_file_to_reversed_list proof_file_path (fun l -> l) in
     List.rev reversed_pf
 
-  let prove_equal t lhs rhs = failwith "not supported yet"
+  let prove t a = failwith "not supported yet"
 
   let reset t =
     t.state <- SDeclaringFuns;
@@ -277,7 +392,10 @@ end
 module Backend = RecompilationBackend
 
 let parse_constr_expr s =
-  Pcoq.parse_string Pcoq.Constr.constr s
+  Pcoq.parse_string Pcoq.Constr.constr
+    (* to avoid clashes of our names with SMT-defined names (eg and, not, true,
+       we prefix them with &, and need to undo that here *)
+    (Str.global_replace (Str.regexp "&") "" s)
 
 let print_constr_expr env sigma e =
   Pp.string_of_ppcmds (Ppconstr.pr_constr_expr env sigma e)
@@ -352,17 +470,6 @@ exception Unsupported
 let lookup_name nameEnv index =
   List.nth nameEnv (index - 1)
 
-let print_lang arities chan =
-  Printf.fprintf chan "define_language! {\n";
-  Printf.fprintf chan "  pub enum CoqSimpleLanguage {\n";
-  Printf.fprintf chan "    Num(i32),\n";
-  Hashtbl.iter
-    (fun f n -> Printf.fprintf chan "    \"%s\" = %s([Id; %d]),\n" f (make_rust_valid f) n)
-    arities;
-  Printf.fprintf chan "    Symbol(Symbol),\n";
-  Printf.fprintf chan "  }\n";
-  Printf.fprintf chan "}\n\n"
-
 let register_arity arities f n =
   match Hashtbl.find_opt arities f with
   | Some m -> if n == m then () else failwith (f ^ " appears with different arities")
@@ -376,43 +483,52 @@ let has_implicit_args gref =
                           (List.map (fun b -> if b then "I" else "E") impargs)); *)
   List.exists (fun b -> b) impargs
 
+(* we use % instead of @ because leading @ is reserved in smtlib *)
+let implicits_prefix r =
+  if has_implicit_args r then "@" else ""
+
 let rec process_expr env sigma arities nameEnv e =
   let ind_to_str i =
     let r = Names.GlobRef.IndRef i in
-    let a = if has_implicit_args r then "@" else "" in
-    a ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
+    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
   let const_to_str c =
     let r = Names.GlobRef.ConstRef c in
-    let a = if has_implicit_args r then "@" else "" in
-    a ^ Pp.string_of_ppcmds (Printer.pr_constant env c) in
+    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constant env c) in
   let ctor_to_str c =
     let r = Names.GlobRef.ConstructRef c in
-    let a = if has_implicit_args r then "@" else "" in
-    a ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
+    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
-  try Sexp.Atom (Stdlib.string_of_int (z_to_int sigma e))
+  (* Note: arity is determined by usage, not by type, because some function (eg sep)
+     might always be used partially applied (we require the same arity at all usages) *)
+  let process_atom e arity =
+    let name = match EConstr.kind sigma e with
+      | Constr.Rel i -> "?" ^ lookup_name nameEnv i
+      | Constr.Var id -> Names.Id.to_string id
+      | Constr.Ind (i, univs) -> ind_to_str i
+      | Constr.Const (c, univs) -> const_to_str c
+      | Constr.Construct (ctor, univs) -> ctor_to_str ctor
+      | Constr.Sort s -> sort_to_str s
+      | _ -> raise Unsupported in
+    if String.starts_with ~prefix:"?" name then
+      Sexp.Atom name
+    else (
+      let n = "&" ^ name in (* to avoid clashes with predefined names from smtlib *)
+      register_arity arities n arity;
+      Sexp.Atom n) in
+  try
+    (* treat Z literals as uninterpreted, so that they can have the same smtlib type U
+       as everything else *)
+    let z = "&" ^ Stdlib.string_of_int (z_to_int sigma e) in
+    register_arity arities z 0;
+    Sexp.Atom z
   with NotACoqNumber ->
         match EConstr.kind sigma e with
-        | Constr.App (f, args) -> begin
-            (let arity = Array.length args in
-             match EConstr.kind sigma f with
-             | Constr.Ind (i, univs) -> register_arity arities (ind_to_str i) arity
-             | Constr.Construct (c, univs) -> register_arity arities (ctor_to_str c) arity
-             | Constr.Const (c, univs) -> register_arity arities (const_to_str c) arity
-             | Constr.Var id -> register_arity arities (Names.Id.to_string id) arity
-             | _ -> ());
-            Sexp.List (process_expr env sigma arities nameEnv f ::
-                         List.map (process_expr env sigma arities nameEnv)
-                           (Array.to_list args))
-          end
-        | Constr.Rel i -> Sexp.Atom ("?" ^ lookup_name nameEnv i)
-        | Constr.Var id -> Sexp.Atom (Names.Id.to_string id)
-        | Constr.Ind (i, univs) -> Sexp.Atom (ind_to_str i)
-        | Constr.Const (c, univs) -> Sexp.Atom (const_to_str c)
-        | Constr.Construct (ctor, univs) -> Sexp.Atom (ctor_to_str ctor)
-        | Constr.Sort s -> Sexp.Atom (sort_to_str s)
-        | _ -> raise Unsupported
+        | Constr.App (f, args) ->
+           Sexp.List (process_atom f (Array.length args) ::
+                        List.map (process_expr env sigma arities nameEnv)
+                          (Array.to_list args))
+        | _ -> process_atom e 0
 
 let destruct_eq sigma t =
   match EConstr.kind sigma t with
@@ -476,7 +592,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
          let rhs' = process_expr env sigma qa.declarations nameEnv rhs in
          (lhs', rhs', AEq (lhs', rhs'))
       | None ->
-         let lhs' = Sexp.Atom "True" in
+         let lhs' = Sexp.Atom "&True" in
          let rhs' = process_expr env sigma qa.declarations nameEnv t in
          (lhs', rhs', AProp rhs') in
     if List.length nameEnv == count_leading_empty_strs nameEnv
@@ -484,7 +600,6 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     res in
 
   let rec process_impls name nameEnv sideconditions manual_triggers t =
-    let i = count_leading_empty_strs nameEnv in
     match destruct_trigger sigma t with
     | Some (tr_exprs, body) ->
        let tr_sexprs = List.map (process_expr env sigma qa.declarations nameEnv) tr_exprs in
@@ -524,12 +639,14 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
       else raise Unsupported
     end
   | LocalDef (id, t, _tp) -> begin
-      let name = Names.Id.to_string id.binder_name in
+      let rawname = Names.Id.to_string id.binder_name in
+      let name = "&" ^ rawname in
+      register_arity qa.declarations name 0;
       let lhs = Sexp.Atom name in
       let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
       register_expr lhs;
       register_expr rhs;
-      Queue.push { rulename = name ^ "$def";
+      Queue.push { rulename = rawname ^ "$def";
                    quantifiers = [];
                    sideconditions = [];
                    conclusion = AEq (lhs, rhs);
@@ -550,6 +667,10 @@ let egg_simpl_goal () =
       (List.rev hyps);
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+
+    let b_smt = apply_query_accumulator qa (module FileBasedSmtBackend) in
+    let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
+
     let b = apply_query_accumulator qa (module Backend) in
     let reversed_pf = List.rev (Backend.minimize b g) in
     let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in

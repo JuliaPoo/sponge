@@ -144,12 +144,12 @@ module FileBasedSmtBackend : BACKEND = struct
 
   let declare_rule t r =
     let oc = Option.get !t in
-    Sexp.output_hum oc (smtlib_rule r);
+    Sexp.output oc (smtlib_rule r);
     Printf.fprintf oc "\n"
 
   let declare_initial_expr t e =
     let oc = Option.get !t in
-    Sexp.output_hum oc (smtlib_initial_expr e);
+    Sexp.output oc (smtlib_initial_expr e);
     Printf.fprintf oc "\n"
 
   let minimize t e =
@@ -157,8 +157,8 @@ module FileBasedSmtBackend : BACKEND = struct
 
   let prove t a =
     let oc = Option.get !t in
-    Sexp.output_hum oc (Sexp.List [Sexp.Atom "assert";
-                                   Sexp.List [Sexp.Atom "not"; (assertion_to_smtlib a)]]);
+    Sexp.output oc (Sexp.List [Sexp.Atom "assert";
+                               Sexp.List [Sexp.Atom "not"; (assertion_to_smtlib a)]]);
     Printf.fprintf oc "\n";
     Printf.fprintf oc "(check-sat)\n";
     (*Printf.fprintf oc "(get-proof)\n"; (* quite verbose *) *)
@@ -368,7 +368,7 @@ end
     close_out oc;
     Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
     flush stdout;
-    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run coq" in
+    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --bin coq" in
     let status = Sys.command cargo_command in
     Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
     if status != 0 then failwith "invoking rust failed"

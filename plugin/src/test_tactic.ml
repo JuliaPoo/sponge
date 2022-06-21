@@ -361,7 +361,7 @@ end
   f_simplify(st, es);
 }
 |};
-    let egg_repo_path = "/home/sam/git/clones/egg" (* adapt as needed *) in
+    let egg_repo_path = "/home/bthom/git/fjfj2/coq/Coquetier/egg" (* adapt as needed *) in
     let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
     let oc = open_out rust_rules_path in
     Buffer.output_buffer oc t.buf;

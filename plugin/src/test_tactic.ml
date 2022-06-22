@@ -576,10 +576,6 @@ let destruct_trigger sigma t =
       | _ -> None)
   | _ -> None
 
-let rec count_leading_empty_strs l =
-  match l with
-  | "" :: t -> 1 + count_leading_empty_strs t
-  | _ -> 0
 
 (* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
 let eggify_hyp env sigma (qa: query_accumulator) hyp =
@@ -595,8 +591,34 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
          let lhs' = Sexp.Atom "&True" in
          let rhs' = process_expr env sigma qa.declarations nameEnv t in
          (lhs', rhs', AProp rhs') in
-    if List.length nameEnv == count_leading_empty_strs nameEnv
-    then (register_expr e1; register_expr e2) else ();
+  (* Register all the quantifier frees subexprs of e1 and e2 *)
+
+    let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option = 
+      (* None means that the current entire e is closed *)
+      (* Some l means that the term is not closed, but has the closed subterms contained in the list *)
+      match e with 
+      | Sexp.Atom(s) ->
+        if (String.starts_with ~prefix:"?" s) then Some([]) else None 
+      | Sexp.List(l)-> 
+           let r = List.map biggest_closed_subexprs' l in
+           let is_none = List.for_all (fun x -> x == None) r in 
+           if is_none then 
+            None 
+           else 
+            Some (List.fold_left 
+                    (fun acc (el, maybe_subterms) ->
+                      match maybe_subterms with
+                      | None -> acc
+                      | Some(subterms) -> acc @ subterms)
+                    [] 
+                    (List.combine l r)) in 
+    let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
+      match biggest_closed_subexprs' e with 
+      | Some(l) -> l 
+      | None -> [e] in
+    List.iter (fun s -> Printf.printf "Closedsubexpr %s\n" (Sexp.to_string_hum s)) (biggest_closed_subexprs e1);
+    List.iter register_expr (biggest_closed_subexprs e1);
+    List.iter register_expr (biggest_closed_subexprs e2);
     res in
 
   let rec process_impls name nameEnv sideconditions manual_triggers t =
@@ -631,27 +653,37 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
   let open Context in
   let open Named.Declaration in
   match hyp with
-  | LocalAssum (id, t) -> begin
-      let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
-      if Termops.is_Prop sigma tp then
-        let name = Names.Id.to_string id.binder_name in
-        process_foralls name [] (EConstr.of_constr t)
-      else raise Unsupported
+  | LocalAssum (id, t) -> 
+    begin
+      let name = Names.Id.to_string id.binder_name in
+      Printf.printf "Start processing %s\n" name;
+      try 
+        let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
+        if Termops.is_Prop sigma tp then
+          process_foralls name [] (EConstr.of_constr t)
+        else raise Unsupported
+      with 
+        Unsupported -> (Printf.printf "Dropped %s\n" name)
     end
   | LocalDef (id, t, _tp) -> begin
       let rawname = Names.Id.to_string id.binder_name in
-      let name = "&" ^ rawname in
-      register_arity qa.declarations name 0;
-      let lhs = Sexp.Atom name in
-      let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
-      register_expr lhs;
-      register_expr rhs;
-      Queue.push { rulename = rawname ^ "$def";
-                   quantifiers = [];
-                   sideconditions = [];
-                   conclusion = AEq (lhs, rhs);
-                   triggers = [] } qa.rules
+      try 
+        let name = "&" ^ rawname in
+        register_arity qa.declarations name 0;
+        let lhs = Sexp.Atom name in
+        let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
+        register_expr lhs;
+        register_expr rhs;
+        Queue.push { rulename = rawname ^ "$def";
+                     quantifiers = [];
+                     sideconditions = [];
+                     conclusion = AEq (lhs, rhs);
+                     triggers = [] } qa.rules
+
+      with 
+        Unsupported -> (Printf.printf "Dropped %s\n" rawname)
     end
+
 
 let egg_simpl_goal () =
   Goal.enter begin fun gl ->
@@ -662,8 +694,8 @@ let egg_simpl_goal () =
     let qa = empty_query_accumulator () in
 
     List.iter (fun hyp ->
-        try eggify_hyp env sigma qa hyp
-        with Unsupported -> ())
+         eggify_hyp env sigma qa hyp)
+        
       (List.rev hyps);
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in

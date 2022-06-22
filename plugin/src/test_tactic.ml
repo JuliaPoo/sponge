@@ -6,6 +6,10 @@ type assertion =
   | AEq of Sexp.t * Sexp.t
   | AProp of Sexp.t
 
+  type proof =  
+  | PSteps of string list
+  | PContradiction of string * string list
+
 let assertion_to_equality a =
   match a with
   | AEq (lhs, rhs) -> (lhs, rhs)
@@ -17,17 +21,21 @@ type rule =
     sideconditions: assertion list;
     conclusion: assertion;
     triggers: Sexp.t list }
-
+type fn_metadata = 
+  {
+    arity : int; 
+    is_nonprop_ctor : bool
+  }
 type query_accumulator =
-  { declarations: (string, int) Hashtbl.t; (* arity of each function symbol *)
+  { declarations: (string, fn_metadata) Hashtbl.t; (* arity of each function symbol, and is it a non-propositional constructor *)
     rules: rule Queue.t;
     initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
 let empty_query_accumulator () =
   let ds = Hashtbl.create 20 in
   (* always-present constants (even if they don't appear in any expression) *)
-  Hashtbl.replace ds "&True" 0;
-  Hashtbl.replace ds "&False" 0;
+  Hashtbl.replace ds "&True" { arity = 0; is_nonprop_ctor = false;};
+  Hashtbl.replace ds "&False" { arity = 0; is_nonprop_ctor = false;};
   { declarations = ds;
     rules = Queue.create ();
     initial_exprs = Hashtbl.create 20 }
@@ -38,25 +46,43 @@ let make_rust_valid s =
     (Str.global_replace (Str.regexp "\\.") "DOT"
        (Str.global_replace (Str.regexp "&") "ID" s))
 
-let proof_file_to_reversed_list filepath f =
+let strip_pre_suff s prefix suffix = 
+  if String.starts_with ~prefix:prefix s && String.ends_with ~suffix:suffix s 
+  then
+    String.sub s (String.length prefix) (String.length s - (String.length suffix + String.length prefix)) 
+  else
+    failwith ("expected '" ^ prefix ^ "..." ^ suffix ^"', but got '" ^ s ^ "'")
+
+let proof_file_to_proof filepath =
   let res = ref [] in
   let chan = open_in filepath in
-  let _discard_unshelve = input_line chan in
+  let contradiction = ref None in
+  let fst_line = input_line chan in
+
+  (if String.starts_with ~prefix:"(* CONTRADICTION *)" fst_line 
+   then 
+      let line = input_line chan in
+      let prefix = "assert " in
+      let suffix = " as ABSURDCASE." in
+      let middle = strip_pre_suff line prefix suffix in
+      contradiction:= Some(middle)
+    else
+     ());
+  ignore(input_line chan);
   let line = ref (input_line chan) in
   (try
-     while not (String.starts_with ~prefix:"idtac" !line); do
-       if String.starts_with ~prefix:"eapply " !line &&
-            String.ends_with ~suffix:";" !line
-       then
-         let c = String.sub !line 7 (String.length !line - 8) in
-         res := f c :: !res;
-         line := input_line chan
-       else
-         failwith ("expected 'eapply (...)', but got '" ^ !line ^ "'")
-     done
-   with End_of_file -> ());
+    while not (String.starts_with ~prefix:"idtac" !line); do
+      let prefix = "eapply " in
+      let suffix = ";" in
+      let middle = strip_pre_suff !line prefix suffix in
+      res := middle :: !res;
+      line := input_line chan
+    done
+  with End_of_file -> ());
   close_in chan;
-  !res
+  match !contradiction with 
+  | Some(c) -> PContradiction(c, List.rev !res)
+  | None -> PSteps (List.rev !res)
 
 let proof_file_path = "/tmp/egg_proof.txt"
 
@@ -108,10 +134,10 @@ module type BACKEND =
   sig
     type t
     val create: unit -> t
-    val declare_fun: t -> string -> int -> unit
+    val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
-    val minimize: t -> Sexp.t -> string list
+    val minimize: t -> Sexp.t -> proof 
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -137,9 +163,9 @@ module FileBasedSmtBackend : BACKEND = struct
 
   let create () = ref (Some (new_output_file ()))
 
-  let declare_fun t fname arity =
+  let declare_fun t fname fn_m =
     let oc = Option.get !t in
-    let args = String.concat " " (List.init arity (fun _ -> "$U")) in
+    let args = String.concat " " (List.init fn_m.arity (fun _ -> "$U")) in
     Printf.fprintf oc "(declare-fun %s (%s) $U)\n" fname args
 
   let declare_rule t r =
@@ -249,6 +275,7 @@ module RecompilationBackend : BACKEND = struct
 
   type t = {
       buf: Buffer.t;
+      ctor_buf : Buffer.t;
       lemma_arity_buf: Buffer.t;
       is_eq_buf: Buffer.t;
       mutable state: state }
@@ -270,13 +297,16 @@ define_language! {
 end;
     let lemma_arity_buf = Buffer.create 1000 in
     let is_eq_buf = Buffer.create 1000 in
-    { buf; lemma_arity_buf; is_eq_buf; state = SDeclaringFuns }
+    let ctor_buf = Buffer.create 1000 in
+    { buf; ctor_buf; lemma_arity_buf; is_eq_buf; state = SDeclaringFuns; }
 
-  let declare_fun t fname arity =
+  let declare_fun t fname fn_m=
     match t.state with
     | SDeclaringFuns ->
        Buffer.add_string t.buf
-         (Printf.sprintf "    \"%s\" = %s([Id; %d]),\n" fname (make_rust_valid fname) arity)
+          (Printf.sprintf "    \"%s\" = %s([Id; %d]),\n" fname (make_rust_valid fname) fn_m.arity);
+       Buffer.add_string t.ctor_buf 
+          (Printf.sprintf "    (\"%s\", (%n,%b)),\n" fname fn_m.arity fn_m.is_nonprop_ctor)
     | _ -> failwith "invalid state machine transition"
 
   let declare_rule t rule =
@@ -285,6 +315,18 @@ end;
         t.state <- SDeclaringRules;
 begin
 Buffer.add_string t.buf {|  }
+}
+
+pub fn symbol_metadata(name : &str) -> Option<(usize,bool)> {
+  let v = vec![
+|}; 
+Buffer.add_buffer t.buf t.ctor_buf;
+Buffer.add_string t.buf {|  ];
+  let o = v.iter().find(|t| t.0 == name);
+  match o {
+    Some((_, n)) => { return Some(*n); }
+    None => { return None; }
+  }
 }
 
 pub fn make_rules() -> Vec<Rewrite<CoqSimpleLanguage, ()>> {
@@ -373,8 +415,8 @@ end
     Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
     if status != 0 then failwith "invoking rust failed"
     else t.state <- SDone;
-    let reversed_pf = proof_file_to_reversed_list proof_file_path (fun l -> l) in
-    List.rev reversed_pf
+    let pf = proof_file_to_proof proof_file_path in
+    pf
 
   let prove t a = failwith "not supported yet"
 
@@ -470,10 +512,10 @@ exception Unsupported
 let lookup_name nameEnv index =
   List.nth nameEnv (index - 1)
 
-let register_arity arities f n =
-  match Hashtbl.find_opt arities f with
-  | Some m -> if n == m then () else failwith (f ^ " appears with different arities")
-  | None -> Hashtbl.add arities f n
+let register_metadata metadata f n =
+  match Hashtbl.find_opt metadata f with
+  | Some m -> if n = m then () else failwith (f ^ " appears with different arities or different nature of being a constructor")
+  | None -> Hashtbl.add metadata f n
 
 let has_implicit_args gref =
   let open Impargs in
@@ -487,7 +529,7 @@ let has_implicit_args gref =
 let implicits_prefix r =
   if has_implicit_args r then "@" else ""
 
-let rec process_expr env sigma arities nameEnv e =
+let rec process_expr env sigma fn_metadatas nameEnv e =
   let ind_to_str i =
     let r = Names.GlobRef.IndRef i in
     implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
@@ -502,31 +544,34 @@ let rec process_expr env sigma arities nameEnv e =
   (* Note: arity is determined by usage, not by type, because some function (eg sep)
      might always be used partially applied (we require the same arity at all usages) *)
   let process_atom e arity =
-    let name = match EConstr.kind sigma e with
-      | Constr.Rel i -> "?" ^ lookup_name nameEnv i
-      | Constr.Var id -> Names.Id.to_string id
-      | Constr.Ind (i, univs) -> ind_to_str i
-      | Constr.Const (c, univs) -> const_to_str c
-      | Constr.Construct (ctor, univs) -> ctor_to_str ctor
-      | Constr.Sort s -> sort_to_str s
+    let name, is_nonprop_ctor = match EConstr.kind sigma e with
+      | Constr.Rel i -> ("?" ^ lookup_name nameEnv i, false)
+      | Constr.Var id -> (Names.Id.to_string id, false)
+      | Constr.Ind (i, univs) -> (ind_to_str i, false)
+      | Constr.Const (c, univs) -> (const_to_str c, false)
+      | Constr.Construct (ctor, univs) -> 
+        (* TODO thread sigma properly *)
+         let sigma, tp = Typing.type_of env sigma e in
+         (ctor_to_str ctor, not (Termops.is_Prop sigma tp))
+      | Constr.Sort s -> (sort_to_str s, false)
       | _ -> raise Unsupported in
     if String.starts_with ~prefix:"?" name then
       Sexp.Atom name
     else (
       let n = "&" ^ name in (* to avoid clashes with predefined names from smtlib *)
-      register_arity arities n arity;
+      register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       Sexp.Atom n) in
   try
     (* treat Z literals as uninterpreted, so that they can have the same smtlib type U
        as everything else *)
     let z = "&" ^ Stdlib.string_of_int (z_to_int sigma e) in
-    register_arity arities z 0;
+    register_metadata fn_metadatas z { arity=0; is_nonprop_ctor = true};
     Sexp.Atom z
   with NotACoqNumber ->
         match EConstr.kind sigma e with
         | Constr.App (f, args) ->
            Sexp.List (process_atom f (Array.length args) ::
-                        List.map (process_expr env sigma arities nameEnv)
+                        List.map (process_expr env sigma fn_metadatas nameEnv)
                           (Array.to_list args))
         | _ -> process_atom e 0
 
@@ -601,7 +646,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
         if (String.starts_with ~prefix:"?" s) then Some([]) else None 
       | Sexp.List(l)-> 
            let r = List.map biggest_closed_subexprs' l in
-           let is_none = List.for_all (fun x -> x == None) r in 
+           let is_none = List.for_all (fun x -> x = None) r in 
            if is_none then 
             None 
            else 
@@ -669,7 +714,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
       let rawname = Names.Id.to_string id.binder_name in
       try 
         let name = "&" ^ rawname in
-        register_arity qa.declarations name 0;
+        register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
         let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
         register_expr lhs;
@@ -704,16 +749,41 @@ let egg_simpl_goal () =
     let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
 
     let b = apply_query_accumulator qa (module Backend) in
-    let reversed_pf = List.rev (Backend.minimize b g) in
-    let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-    print_endline "Composed proof:";
-    print_endline (print_constr_expr env sigma composed_pf);
-    Refine.refine ~typecheck:true (fun sigma ->
-        let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-        Feedback.msg_notice
-          Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-        (sigma, constr_pf))
+    let pf = Backend.minimize b g in
+    (match pf with 
+    | PSteps(pf_steps) ->
+      let reversed_pf = List.rev pf_steps in 
+      let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+      print_endline "Composed proof:";
+      print_endline (print_constr_expr env sigma composed_pf);
+      Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          Feedback.msg_notice
+            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          (sigma, constr_pf))
+    | PContradiction(ctr, pf_steps) ->
+      let reversed_pf = List.rev pf_steps in 
+      let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+      let ctr_coq = parse_constr_expr ctr in
+      print_endline "Contradiction proof:";
+      print_endline ctr;
+      print_endline "Composed proof of contradiction:";
+      print_endline (print_constr_expr env sigma composed_pf);
+      let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          Feedback.msg_notice
+            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          (sigma, constr_pf)) in 
+      let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in 
+      Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal 
+      )
     end
+      (* Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          Feedback.msg_notice
+            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          (sigma, constr_pf)) *)
+      
 
 let kind_to_str sigma c =
   match EConstr.kind sigma c with

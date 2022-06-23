@@ -6,7 +6,7 @@ type assertion =
   | AEq of Sexp.t * Sexp.t
   | AProp of Sexp.t
 
-  type proof =  
+  type proof =
   | PSteps of string list
   | PContradiction of string * string list
 
@@ -21,9 +21,9 @@ type rule =
     sideconditions: assertion list;
     conclusion: assertion;
     triggers: Sexp.t list }
-type fn_metadata = 
+type fn_metadata =
   {
-    arity : int; 
+    arity : int;
     is_nonprop_ctor : bool
   }
 type query_accumulator =
@@ -46,10 +46,10 @@ let make_rust_valid s =
     (Str.global_replace (Str.regexp "\\.") "DOT"
        (Str.global_replace (Str.regexp "&") "ID" s))
 
-let strip_pre_suff s prefix suffix = 
-  if String.starts_with ~prefix:prefix s && String.ends_with ~suffix:suffix s 
+let strip_pre_suff s prefix suffix =
+  if String.starts_with ~prefix:prefix s && String.ends_with ~suffix:suffix s
   then
-    String.sub s (String.length prefix) (String.length s - (String.length suffix + String.length prefix)) 
+    String.sub s (String.length prefix) (String.length s - (String.length suffix + String.length prefix))
   else
     failwith ("expected '" ^ prefix ^ "..." ^ suffix ^"', but got '" ^ s ^ "'")
 
@@ -59,8 +59,8 @@ let proof_file_to_proof filepath =
   let contradiction = ref None in
   let fst_line = input_line chan in
 
-  (if String.starts_with ~prefix:"(* CONTRADICTION *)" fst_line 
-   then 
+  (if String.starts_with ~prefix:"(* CONTRADICTION *)" fst_line
+   then
       let line = input_line chan in
       let prefix = "assert " in
       let suffix = " as ABSURDCASE." in
@@ -80,7 +80,7 @@ let proof_file_to_proof filepath =
     done
   with End_of_file -> ());
   close_in chan;
-  match !contradiction with 
+  match !contradiction with
   | Some(c) -> PContradiction(c, List.rev !res)
   | None -> PSteps (List.rev !res)
 
@@ -137,7 +137,7 @@ module type BACKEND =
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
-    val minimize: t -> Sexp.t -> proof 
+    val minimize: t -> Sexp.t -> proof
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -305,7 +305,7 @@ end;
     | SDeclaringFuns ->
        Buffer.add_string t.buf
           (Printf.sprintf "    \"%s\" = %s([Id; %d]),\n" fname (make_rust_valid fname) fn_m.arity);
-       Buffer.add_string t.ctor_buf 
+       Buffer.add_string t.ctor_buf
           (Printf.sprintf "    (\"%s\", (%n,%b)),\n" fname fn_m.arity fn_m.is_nonprop_ctor)
     | _ -> failwith "invalid state machine transition"
 
@@ -319,7 +319,7 @@ Buffer.add_string t.buf {|  }
 
 pub fn symbol_metadata(name : &str) -> Option<(usize,bool)> {
   let v = vec![
-|}; 
+|};
 Buffer.add_buffer t.buf t.ctor_buf;
 Buffer.add_string t.buf {|  ];
   let o = v.iter().find(|t| t.0 == name);
@@ -403,7 +403,8 @@ end
   f_simplify(st, es);
 }
 |};
-    let egg_repo_path = "/home/bthom/git/fjfj2/coq/Coquetier/egg" (* adapt as needed *) in
+
+    let egg_repo_path = "/tmp/link_to_egg" (* adapt as needed *) in
     let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
     let oc = open_out rust_rules_path in
     Buffer.output_buffer oc t.buf;
@@ -549,7 +550,7 @@ let rec process_expr env sigma fn_metadatas nameEnv e =
       | Constr.Var id -> (Names.Id.to_string id, false)
       | Constr.Ind (i, univs) -> (ind_to_str i, false)
       | Constr.Const (c, univs) -> (const_to_str c, false)
-      | Constr.Construct (ctor, univs) -> 
+      | Constr.Construct (ctor, univs) ->
         (* TODO thread sigma properly *)
          let sigma, tp = Typing.type_of env sigma e in
          (ctor_to_str ctor, not (Termops.is_Prop sigma tp))
@@ -638,28 +639,28 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
          (lhs', rhs', AProp rhs') in
   (* Register all the quantifier frees subexprs of e1 and e2 *)
 
-    let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option = 
+    let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option =
       (* None means that the current entire e is closed *)
       (* Some l means that the term is not closed, but has the closed subterms contained in the list *)
-      match e with 
+      match e with
       | Sexp.Atom(s) ->
-        if (String.starts_with ~prefix:"?" s) then Some([]) else None 
-      | Sexp.List(l)-> 
+        if (String.starts_with ~prefix:"?" s) then Some([]) else None
+      | Sexp.List(l)->
            let r = List.map biggest_closed_subexprs' l in
-           let is_none = List.for_all (fun x -> x = None) r in 
-           if is_none then 
-            None 
-           else 
-            Some (List.fold_left 
+           let is_none = List.for_all (fun x -> x = None) r in
+           if is_none then
+            None
+           else
+            Some (List.fold_left
                     (fun acc (el, maybe_subterms) ->
                       match maybe_subterms with
                       | None -> acc
                       | Some(subterms) -> acc @ subterms)
-                    [] 
-                    (List.combine l r)) in 
+                    []
+                    (List.combine l r)) in
     let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
-      match biggest_closed_subexprs' e with 
-      | Some(l) -> l 
+      match biggest_closed_subexprs' e with
+      | Some(l) -> l
       | None -> [e] in
     List.iter (fun s -> Printf.printf "Closedsubexpr %s\n" (Sexp.to_string_hum s)) (biggest_closed_subexprs e1);
     List.iter register_expr (biggest_closed_subexprs e1);
@@ -698,21 +699,21 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
   let open Context in
   let open Named.Declaration in
   match hyp with
-  | LocalAssum (id, t) -> 
+  | LocalAssum (id, t) ->
     begin
       let name = Names.Id.to_string id.binder_name in
       Printf.printf "Start processing %s\n" name;
-      try 
+      try
         let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
         if Termops.is_Prop sigma tp then
           process_foralls name [] (EConstr.of_constr t)
         else raise Unsupported
-      with 
+      with
         Unsupported -> (Printf.printf "Dropped %s\n" name)
     end
   | LocalDef (id, t, _tp) -> begin
       let rawname = Names.Id.to_string id.binder_name in
-      try 
+      try
         let name = "&" ^ rawname in
         register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
@@ -725,7 +726,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                      conclusion = AEq (lhs, rhs);
                      triggers = [] } qa.rules
 
-      with 
+      with
         Unsupported -> (Printf.printf "Dropped %s\n" rawname)
     end
 
@@ -740,7 +741,7 @@ let egg_simpl_goal () =
 
     List.iter (fun hyp ->
          eggify_hyp env sigma qa hyp)
-        
+
       (List.rev hyps);
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
@@ -750,9 +751,9 @@ let egg_simpl_goal () =
 
     let b = apply_query_accumulator qa (module Backend) in
     let pf = Backend.minimize b g in
-    (match pf with 
+    (match pf with
     | PSteps(pf_steps) ->
-      let reversed_pf = List.rev pf_steps in 
+      let reversed_pf = List.rev pf_steps in
       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
       print_endline "Composed proof:";
       print_endline (print_constr_expr env sigma composed_pf);
@@ -762,7 +763,7 @@ let egg_simpl_goal () =
             Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
           (sigma, constr_pf))
     | PContradiction(ctr, pf_steps) ->
-      let reversed_pf = List.rev pf_steps in 
+      let reversed_pf = List.rev pf_steps in
       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
       let ctr_coq = parse_constr_expr ctr in
       print_endline "Contradiction proof:";
@@ -773,9 +774,9 @@ let egg_simpl_goal () =
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
           Feedback.msg_notice
             Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          (sigma, constr_pf)) in 
-      let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in 
-      Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal 
+          (sigma, constr_pf)) in
+      let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
+      Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal
       )
     end
       (* Refine.refine ~typecheck:true (fun sigma ->
@@ -783,7 +784,7 @@ let egg_simpl_goal () =
           Feedback.msg_notice
             Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
           (sigma, constr_pf)) *)
-      
+
 
 let kind_to_str sigma c =
   match EConstr.kind sigma c with

@@ -777,7 +777,11 @@ let egg_simpl_goal () =
             Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
           (sigma, constr_pf)) in
       let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
-      Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal
+        tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type"))) (fun coqfalse -> 
+        Tacticals.tclTHENLIST [ Tactics.elim_type coqfalse;  
+                          Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal ]
+        );
+      
       )
     end
       (* Refine.refine ~typecheck:true (fun sigma ->

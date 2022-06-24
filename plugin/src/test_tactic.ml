@@ -44,7 +44,8 @@ let empty_query_accumulator () =
 let make_rust_valid s =
   Str.global_replace (Str.regexp "@") "AT"
     (Str.global_replace (Str.regexp "\\.") "DOT"
-       (Str.global_replace (Str.regexp "&") "ID" s))
+       (Str.global_replace (Str.regexp "&") "ID"
+          (Str.global_replace (Str.regexp "'") "PRIME" s)))
 
 let strip_pre_suff s prefix suffix =
   if String.starts_with ~prefix:prefix s && String.ends_with ~suffix:suffix s
@@ -411,7 +412,7 @@ end
     close_out oc;
     Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
     flush stdout;
-    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --bin coq" in
+    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coq" in
     let status = Sys.command cargo_command in
     Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
     if status != 0 then failwith "invoking rust failed"

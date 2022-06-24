@@ -123,7 +123,7 @@ equality as well, just in more steps
     clear Z_forget_mod_in_lt_l.
     pose proof Z.le_lt_trans as Z_le_lt_trans.
     pose proof Z.mod_le as Z_mod_le.
-    egg_simpl_goal.
+    egg_simpl_goal 5.
     1: exact C1.
     4: exact I.
     (* transitivity leads to uninferrable evars! *)
@@ -163,16 +163,16 @@ equality as well, just in more steps
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
 
-    egg_simpl_goal.
+    egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal.
+    all: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal.
+    all: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal.
+    all: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
   Time Qed. (* 0.024 secs *)

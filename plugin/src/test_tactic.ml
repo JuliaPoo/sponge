@@ -138,7 +138,7 @@ module type BACKEND =
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
-    val minimize: t -> Sexp.t -> proof
+    val minimize: t -> Sexp.t -> int -> proof
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -179,7 +179,7 @@ module FileBasedSmtBackend : BACKEND = struct
     Sexp.output oc (smtlib_initial_expr e);
     Printf.fprintf oc "\n"
 
-  let minimize t e =
+  let minimize t e ffn_limit =
     failwith "not supported"
 
   let prove t a =
@@ -287,11 +287,13 @@ begin
 Buffer.add_string buf {|
 #![allow(missing_docs,non_camel_case_types)]
 use crate ::*;
+
 pub fn get_proof_file_path() -> &'static str {
   "|};
 Buffer.add_string buf proof_file_path;
 Buffer.add_string buf {|"
 }
+
 define_language! {
   pub enum CoqSimpleLanguage {
 |}
@@ -383,7 +385,7 @@ Buffer.add_string t.buf {|  ];
 }
 
 #[allow(unused_variables)]
-pub fn run_simplifier(f_simplify : fn(&str, Vec<&str>) -> (), f_prove : fn(&str, &str, Vec<&str>) -> ()) {
+pub fn run_simplifier(f_simplify : fn(&str, Vec<&str>, Ffn) -> (), f_prove : fn(&str, &str, Vec<&str>) -> ()) {
   let es = vec![
 |}
 end
@@ -393,18 +395,18 @@ end
     Sexp.to_buffer ~buf:t.buf e;
     Buffer.add_string t.buf "\",\n"
 
-  let minimize t e =
+  let minimize t e ffn_limit =
     (match t.state with
      | SDeclaringInitialExprs -> ()
      | _ -> failwith "invalid state machine transition");
     Buffer.add_string t.buf "  ];\n";
     Buffer.add_string t.buf "  let st : &str = \"";
     Sexp.to_buffer ~buf:t.buf e;
-    Buffer.add_string t.buf {|";
-  f_simplify(st, es);
-}
-|};
-
+    Buffer.add_string t.buf "\";\n";
+    Buffer.add_string t.buf "  f_simplify(st, es, ";
+    Buffer.add_string t.buf (string_of_int ffn_limit);
+    Buffer.add_string t.buf ");\n";
+    Buffer.add_string t.buf "}\n";
     let egg_repo_path = "/opt/link_to_egg" (* adapt as needed *) in
     let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
     let oc = open_out rust_rules_path in
@@ -734,7 +736,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     end
 
 
-let egg_simpl_goal () =
+let egg_simpl_goal ffn_limit =
   Goal.enter begin fun gl ->
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
@@ -753,7 +755,7 @@ let egg_simpl_goal () =
     let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
 
     let b = apply_query_accumulator qa (module Backend) in
-    let pf = Backend.minimize b g in
+    let pf = Backend.minimize b g ffn_limit in
     (match pf with
     | PSteps(pf_steps) ->
       let reversed_pf = List.rev pf_steps in

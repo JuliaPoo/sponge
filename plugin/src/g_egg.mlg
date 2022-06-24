@@ -28,8 +28,8 @@ VERNAC COMMAND EXTEND ShowOneConstruction CLASSIFIED AS QUERY
 END
 
 TACTIC EXTEND egg_simpl_goal
-| [ "egg_simpl_goal" ] ->
-  { Test_tactic.egg_simpl_goal () }
+| [ "egg_simpl_goal" int(ffn_limit) ] ->
+  { Test_tactic.egg_simpl_goal ffn_limit }
 END
 
 TACTIC EXTEND inspect

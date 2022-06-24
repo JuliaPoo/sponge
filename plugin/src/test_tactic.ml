@@ -441,6 +441,8 @@ let parse_constr_expr s =
        we prefix them with &, and need to undo that here *)
     (Str.global_replace (Str.regexp "&") "" s)
 
+let do_print_proofs = false
+
 let print_constr_expr env sigma e =
   Pp.string_of_ppcmds (Ppconstr.pr_constr_expr env sigma e)
 
@@ -663,7 +665,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
       match biggest_closed_subexprs' e with
       | Some(l) -> l
       | None -> [e] in
-    List.iter (fun s -> Printf.printf "Closedsubexpr %s\n" (Sexp.to_string_hum s)) (biggest_closed_subexprs e1);
+    (*List.iter (fun s -> Printf.printf "Closedsubexpr %s\n" (Sexp.to_string_hum s)) (biggest_closed_subexprs e1);*)
     List.iter register_expr (biggest_closed_subexprs e1);
     List.iter register_expr (biggest_closed_subexprs e2);
     res in
@@ -703,7 +705,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
   | LocalAssum (id, t) ->
     begin
       let name = Names.Id.to_string id.binder_name in
-      Printf.printf "Start processing %s\n" name;
+      (*Printf.printf "Start processing %s\n" name;*)
       try
         let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
         if Termops.is_Prop sigma tp then
@@ -756,33 +758,41 @@ let egg_simpl_goal () =
     | PSteps(pf_steps) ->
       let reversed_pf = List.rev pf_steps in
       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-      print_endline "Composed proof:";
-      print_endline (print_constr_expr env sigma composed_pf);
+      if do_print_proofs then (
+        print_endline "Composed proof:";
+        print_endline (print_constr_expr env sigma composed_pf);
+      ) else ();
       Refine.refine ~typecheck:true (fun sigma ->
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          Feedback.msg_notice
-            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          if do_print_proofs then (
+            Feedback.msg_notice
+              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          ) else ();
           (sigma, constr_pf))
     | PContradiction(ctr, pf_steps) ->
-      let reversed_pf = List.rev pf_steps in
-      let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-      let ctr_coq = parse_constr_expr ctr in
-      print_endline "Contradiction proof:";
-      print_endline ctr;
-      print_endline "Composed proof of contradiction:";
-      print_endline (print_constr_expr env sigma composed_pf);
-      let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
+       let reversed_pf = List.rev pf_steps in
+       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+       let ctr_coq = parse_constr_expr ctr in
+       if do_print_proofs then (
+         print_endline "Contradiction proof:";
+         print_endline ctr;
+         print_endline "Composed proof of contradiction:";
+         print_endline (print_constr_expr env sigma composed_pf);
+       ) else ();
+       let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          Feedback.msg_notice
-            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          if do_print_proofs then (
+            Feedback.msg_notice
+              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          ) else ();
           (sigma, constr_pf)) in
-      let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
-        tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type"))) (fun coqfalse -> 
-        Tacticals.tclTHENLIST [ Tactics.elim_type coqfalse;  
-                          Tacticals.tclTHENFIRST (Tactics.assert_as true None None t_ctr) tac_proof_equal ]
-        );
-      
-      )
+       let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
+       tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type")))
+         (fun coqfalse ->
+           Tacticals.tclTHENLIST
+             [ Tactics.elim_type coqfalse;
+               Tacticals.tclTHENFIRST
+                 (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
     end
       (* Refine.refine ~typecheck:true (fun sigma ->
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in

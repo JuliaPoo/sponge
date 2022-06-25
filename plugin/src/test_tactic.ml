@@ -1,6 +1,11 @@
 open Sexplib (* opam install sexplib *)
 open Proofview
 
+let egg_repo_path = "/opt/link_to_egg" (* adapt as needed *)
+let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs"
+let recompilation_proof_file_path = "/tmp/egg_proof.txt"
+let coquetier_input_path = egg_repo_path ^ "/coquetier_input.smt2"
+let coquetier_proof_file_path = egg_repo_path ^ "/coquetier_proof_output.txt"
 
 type assertion =
   | AEq of Sexp.t * Sexp.t
@@ -21,11 +26,11 @@ type rule =
     sideconditions: assertion list;
     conclusion: assertion;
     triggers: Sexp.t list }
+
 type fn_metadata =
-  {
-    arity : int;
-    is_nonprop_ctor : bool
-  }
+  { arity : int;
+    is_nonprop_ctor : bool }
+
 type query_accumulator =
   { declarations: (string, fn_metadata) Hashtbl.t; (* arity of each function symbol, and is it a non-propositional constructor *)
     rules: rule Queue.t;
@@ -84,8 +89,6 @@ let proof_file_to_proof filepath =
   match !contradiction with
   | Some(c) -> PContradiction(c, List.rev !res)
   | None -> PSteps (List.rev !res)
-
-let proof_file_path = "/tmp/egg_proof.txt"
 
 let assertion_to_smtlib a =
   match a with
@@ -180,7 +183,16 @@ module FileBasedSmtBackend : (BACKEND with type params = string) = struct
     Printf.fprintf t.oc "\n"
 
   let minimize t e ffn_limit =
-    failwith "not supported"
+    Sexp.output t.oc (Sexp.List [Sexp.Atom "minimize";
+                                 e; Sexp.Atom (string_of_int ffn_limit)]);
+    Printf.fprintf t.oc "\n";
+    close_out t.oc;
+    Printf.printf "Wrote %s\n" t.smt_file_path;
+    flush stdout;
+    let command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coquetier" in
+    let status = Sys.command command in
+    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    proof_file_to_proof coquetier_proof_file_path
 
   let prove t a =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "assert";
@@ -283,7 +295,7 @@ use crate ::*;
 
 pub fn get_proof_file_path() -> &'static str {
   "|};
-Buffer.add_string buf proof_file_path;
+Buffer.add_string buf recompilation_proof_file_path;
 Buffer.add_string buf {|"
 }
 
@@ -341,7 +353,8 @@ end
     Buffer.add_string t.lemma_arity_buf {|    ("|};
     Buffer.add_string t.lemma_arity_buf rule.rulename;
     Buffer.add_string t.lemma_arity_buf "\", ";
-    Buffer.add_string t.lemma_arity_buf (string_of_int (List.length rule.quantifiers));
+    let arity = List.length rule.quantifiers + List.length rule.sideconditions in
+    Buffer.add_string t.lemma_arity_buf (string_of_int arity);
     Buffer.add_string t.lemma_arity_buf "),\n"
 
   let declare_initial_expr t e =
@@ -400,8 +413,6 @@ end
     Buffer.add_string t.buf (string_of_int ffn_limit);
     Buffer.add_string t.buf ");\n";
     Buffer.add_string t.buf "}\n";
-    let egg_repo_path = "/opt/link_to_egg" (* adapt as needed *) in
-    let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs" in
     let oc = open_out rust_rules_path in
     Buffer.output_buffer oc t.buf;
     close_out oc;
@@ -412,7 +423,7 @@ end
     Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
     if status != 0 then failwith "invoking rust failed"
     else t.state <- SDone;
-    let pf = proof_file_to_proof proof_file_path in
+    let pf = proof_file_to_proof recompilation_proof_file_path in
     pf
 
   let prove t a = failwith "not supported yet"
@@ -428,7 +439,7 @@ end
 end
 
 (* can be switched to another backend *)
-module Backend = RecompilationBackend
+module Backend = FileBasedSmtBackend
 
 let parse_constr_expr s =
   Pcoq.parse_string Pcoq.Constr.constr
@@ -510,6 +521,11 @@ exception Unsupported
 
 let lookup_name nameEnv index =
   List.nth nameEnv (index - 1)
+
+let rec drop_leading_empty_strings nameEnv =
+  match nameEnv with
+  | [] -> []
+  | h :: t -> if h = "" then drop_leading_empty_strings t else nameEnv
 
 let register_metadata metadata f n =
   match Hashtbl.find_opt metadata f with
@@ -679,7 +695,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
          else raise Unsupported (* foralls after impls are not supported *)
       | _ -> Queue.push {
                  rulename = name;
-                 quantifiers = List.rev nameEnv;
+                 quantifiers = List.rev (drop_leading_empty_strings nameEnv);
                  sideconditions = List.rev sideconditions;
                  conclusion = to_assertion nameEnv t;
                  triggers = manual_triggers;
@@ -744,13 +760,24 @@ let egg_simpl_goal ffn_limit =
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
 
+    let backends : (string, (module BACKEND)) Hashtbl.t = Hashtbl.create 17 in
+    Hashtbl.add backends "RecompilationBackend" (module RecompilationBackend : BACKEND);
+    Hashtbl.add backends "FileBasedSmtBackend" (module FileBasedSmtBackend : BACKEND);
+    let _TODO_use_backends = backends in
+
     let b_smt = FileBasedSmtBackend.create "/tmp/egraph_query.smt2" in
     apply_query_accumulator qa (module FileBasedSmtBackend) b_smt;
     let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
 
+    let b_coquetier = FileBasedSmtBackend.create coquetier_input_path in
+    apply_query_accumulator qa (module Backend) b_coquetier;
+    let pf = Backend.minimize b_coquetier g ffn_limit in
+
+    (*
     let b = RecompilationBackend.create () in
     apply_query_accumulator qa (module Backend) b;
     let pf = Backend.minimize b g ffn_limit in
+     *)
     (match pf with
     | PSteps(pf_steps) ->
       let reversed_pf = List.rev pf_steps in

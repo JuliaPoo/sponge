@@ -134,7 +134,8 @@ let smtlib_initial_expr e =
 module type BACKEND =
   sig
     type t
-    val create: unit -> t
+    type params
+    val create: params -> t
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
@@ -144,12 +145,13 @@ module type BACKEND =
     val close: t -> unit
   end
 
-module FileBasedSmtBackend : BACKEND = struct
-  type t = out_channel option ref
+module FileBasedSmtBackend : (BACKEND with type params = string) = struct
+  type t =
+    { oc: out_channel;
+      smt_file_path: string }
+  type params = string
 
-  let smt_file_path = "/tmp/egraph_query.smt2"
-
-  let new_output_file () =
+  let new_output_file smt_file_path =
     let oc = open_out smt_file_path in
     Printf.fprintf oc "(set-logic UF)\n";
     Printf.fprintf oc "(set-option :produce-proofs true)\n";
@@ -162,66 +164,55 @@ module FileBasedSmtBackend : BACKEND = struct
        to what our untyped functions return *)
     oc
 
-  let create () = ref (Some (new_output_file ()))
+  let create smt_file_path =
+    { oc = new_output_file smt_file_path; smt_file_path }
 
   let declare_fun t fname fn_m =
-    let oc = Option.get !t in
     let args = String.concat " " (List.init fn_m.arity (fun _ -> "$U")) in
-    Printf.fprintf oc "(declare-fun %s (%s) $U)\n" fname args
+    Printf.fprintf t.oc "(declare-fun %s (%s) $U)\n" fname args
 
   let declare_rule t r =
-    let oc = Option.get !t in
-    Sexp.output oc (smtlib_rule r);
-    Printf.fprintf oc "\n"
+    Sexp.output t.oc (smtlib_rule r);
+    Printf.fprintf t.oc "\n"
 
   let declare_initial_expr t e =
-    let oc = Option.get !t in
-    Sexp.output oc (smtlib_initial_expr e);
-    Printf.fprintf oc "\n"
+    Sexp.output t.oc (smtlib_initial_expr e);
+    Printf.fprintf t.oc "\n"
 
   let minimize t e ffn_limit =
     failwith "not supported"
 
   let prove t a =
-    let oc = Option.get !t in
-    Sexp.output oc (Sexp.List [Sexp.Atom "assert";
+    Sexp.output t.oc (Sexp.List [Sexp.Atom "assert";
                                Sexp.List [Sexp.Atom "not"; (assertion_to_smtlib a)]]);
-    Printf.fprintf oc "\n";
-    Printf.fprintf oc "(check-sat)\n";
-    (*Printf.fprintf oc "(get-proof)\n"; (* quite verbose *) *)
-    close_out oc;
-    t := None;
-    Printf.printf "Wrote %s\n" smt_file_path;
+    Printf.fprintf t.oc "\n";
+    Printf.fprintf t.oc "(check-sat)\n";
+    (*Printf.fprintf t.oc "(get-proof)\n"; (* quite verbose *) *)
+    close_out t.oc;
+    Printf.printf "Wrote %s\n" t.smt_file_path;
     flush stdout;
-    let command = "time cvc5 --tlimit=1000 " ^ smt_file_path in
+    let command = "time cvc5 --tlimit=1000 " ^ t.smt_file_path in
     let status = Sys.command command in
     Printf.printf "Command '%s' returned exit status %d\n" command status;
     None
 
   let reset t =
-    (match !t with
-     | Some oc -> close_out oc
-     | None -> ());
-    t := Some (new_output_file ())
+    failwith "not supported"
 
   let close t =
-    match !t with
-    | Some oc -> close_out oc
-    | None -> ()
+    try close_out t.oc with _ -> ()
 
 end
 
-let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) =
-  let m = B.create () in
+let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (m: bt) =
   Hashtbl.iter (B.declare_fun m) qa.declarations;
   Queue.iter (B.declare_rule m) qa.rules;
-  Hashtbl.iter (fun e () -> B.declare_initial_expr m e) qa.initial_exprs;
-  m
+  Hashtbl.iter (fun e () -> B.declare_initial_expr m e) qa.initial_exprs
 
 (* Once created, supports interactions satisfying the following regex:
 ( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove ); reset )
 and the close at the end is optional a no-op. *)
-module RecompilationBackend : BACKEND = struct
+module RecompilationBackend : (BACKEND with type params = unit) = struct
   let needs_multipattern r =
     (match r.sideconditions with
      | _ :: _ -> true
@@ -280,6 +271,8 @@ module RecompilationBackend : BACKEND = struct
       lemma_arity_buf: Buffer.t;
       is_eq_buf: Buffer.t;
       mutable state: state }
+
+  type params = unit
 
   let create () =
     let buf = Buffer.create 10000 in
@@ -751,10 +744,12 @@ let egg_simpl_goal ffn_limit =
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
 
-    let b_smt = apply_query_accumulator qa (module FileBasedSmtBackend) in
+    let b_smt = FileBasedSmtBackend.create "/tmp/egraph_query.smt2" in
+    apply_query_accumulator qa (module FileBasedSmtBackend) b_smt;
     let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
 
-    let b = apply_query_accumulator qa (module Backend) in
+    let b = RecompilationBackend.create () in
+    apply_query_accumulator qa (module Backend) b;
     let pf = Backend.minimize b g ffn_limit in
     (match pf with
     | PSteps(pf_steps) ->

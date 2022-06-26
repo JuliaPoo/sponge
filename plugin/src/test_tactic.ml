@@ -137,8 +137,7 @@ let smtlib_initial_expr e =
 module type BACKEND =
   sig
     type t
-    type params
-    val create: params -> t
+    val create: unit -> t
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
@@ -148,11 +147,10 @@ module type BACKEND =
     val close: t -> unit
   end
 
-module FileBasedSmtBackend : (BACKEND with type params = string) = struct
+module FileBasedSmtBackend : BACKEND = struct
   type t =
     { oc: out_channel;
       smt_file_path: string }
-  type params = string
 
   let new_output_file smt_file_path =
     let oc = open_out smt_file_path in
@@ -167,8 +165,10 @@ module FileBasedSmtBackend : (BACKEND with type params = string) = struct
        to what our untyped functions return *)
     oc
 
-  let create smt_file_path =
-    { oc = new_output_file smt_file_path; smt_file_path }
+  let create () =
+    let smt_file_path = "/tmp/egraph_query.smt2" in
+    let oc = new_output_file smt_file_path in
+    { oc; smt_file_path }
 
   let declare_fun t fname fn_m =
     let args = String.concat " " (List.init fn_m.arity (fun _ -> "$U")) in
@@ -183,16 +183,7 @@ module FileBasedSmtBackend : (BACKEND with type params = string) = struct
     Printf.fprintf t.oc "\n"
 
   let minimize t e ffn_limit =
-    Sexp.output t.oc (Sexp.List [Sexp.Atom "minimize";
-                                 e; Sexp.Atom (string_of_int ffn_limit)]);
-    Printf.fprintf t.oc "\n";
-    close_out t.oc;
-    Printf.printf "Wrote %s\n" t.smt_file_path;
-    flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coquetier" in
-    let status = Sys.command command in
-    Printf.printf "Command '%s' returned exit status %d\n" command status;
-    proof_file_to_proof coquetier_proof_file_path
+    failwith "not supported"
 
   let prove t a =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "assert";
@@ -216,6 +207,52 @@ module FileBasedSmtBackend : (BACKEND with type params = string) = struct
 
 end
 
+
+module FileBasedEggBackend : BACKEND = struct
+  type t =
+    { oc: out_channel;
+      query_file_path: string;
+      response_file_path: string }
+
+  let create () =
+    let query_file_path = coquetier_input_path in
+    let oc = open_out query_file_path in
+    let response_file_path = coquetier_proof_file_path in
+    { oc; query_file_path; response_file_path }
+
+  let declare_fun t fname fn_m = () (* no need to declare functions *)
+
+  let declare_rule t r =
+    Sexp.output t.oc (smtlib_rule r);
+    Printf.fprintf t.oc "\n"
+
+  let declare_initial_expr t e =
+    Sexp.output t.oc (smtlib_initial_expr e);
+    Printf.fprintf t.oc "\n"
+
+  let minimize t e ffn_limit =
+    Sexp.output t.oc (Sexp.List [Sexp.Atom "minimize";
+                                 e; Sexp.Atom (string_of_int ffn_limit)]);
+    Printf.fprintf t.oc "\n";
+    close_out t.oc;
+    Printf.printf "Wrote %s\n" t.query_file_path;
+    flush stdout;
+    let command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coquetier" in
+    let status = Sys.command command in
+    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    proof_file_to_proof t.response_file_path
+
+  let prove t a =
+    failwith "not supported"
+
+  let reset t =
+    failwith "not supported"
+
+  let close t =
+    try close_out t.oc with _ -> ()
+
+end
+
 let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (m: bt) =
   Hashtbl.iter (B.declare_fun m) qa.declarations;
   Queue.iter (B.declare_rule m) qa.rules;
@@ -224,7 +261,7 @@ let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (
 (* Once created, supports interactions satisfying the following regex:
 ( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove ); reset )
 and the close at the end is optional a no-op. *)
-module RecompilationBackend : (BACKEND with type params = unit) = struct
+module RecompilationBackend : BACKEND = struct
   let needs_multipattern r =
     (match r.sideconditions with
      | _ :: _ -> true
@@ -283,8 +320,6 @@ module RecompilationBackend : (BACKEND with type params = unit) = struct
       lemma_arity_buf: Buffer.t;
       is_eq_buf: Buffer.t;
       mutable state: state }
-
-  type params = unit
 
   let create () =
     let buf = Buffer.create 10000 in
@@ -438,16 +473,37 @@ end
 
 end
 
-(* can be switched to another backend *)
-module Backend = FileBasedSmtBackend
+let get_backend_name: unit -> string =
+  Goptions.declare_string_option_and_ref
+    ~depr:false
+    ~key:["Egg"; "Backend"]
+    ~value:"FileBasedEggBackend"
+
+let log_ignored_hyps: unit -> bool =
+  Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Egg";"Log";"Ignored";"Hypotheses"]
+    ~value:false
+
+let log_proofs: unit -> bool =
+  Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Egg";"Log";"Proofs"]
+    ~value:false
+
+let get_backend () : (module BACKEND) =
+  let name = get_backend_name () in
+  match name with
+  | "FileBasedEggBackend" -> (module FileBasedEggBackend)
+  | "FileBasedSmtBackend" -> (module FileBasedSmtBackend)
+  | "RecompilationBackend" -> (module RecompilationBackend)
+  | _ -> failwith ("no backend named " ^ name)
 
 let parse_constr_expr s =
   Pcoq.parse_string Pcoq.Constr.constr
     (* to avoid clashes of our names with SMT-defined names (eg and, not, true,
        we prefix them with &, and need to undo that here *)
     (Str.global_replace (Str.regexp "&") "" s)
-
-let do_print_proofs = false
 
 let print_constr_expr env sigma e =
   Pp.string_of_ppcmds (Ppconstr.pr_constr_expr env sigma e)
@@ -723,7 +779,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
           process_foralls name [] (EConstr.of_constr t)
         else raise Unsupported
       with
-        Unsupported -> (Printf.printf "Dropped %s\n" name)
+        Unsupported -> if log_ignored_hyps () then Printf.printf "Dropped %s\n" name
     end
   | LocalDef (id, t, _tp) -> begin
       let rawname = Names.Id.to_string id.binder_name in
@@ -741,9 +797,24 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                      triggers = [] } qa.rules
 
       with
-        Unsupported -> (Printf.printf "Dropped %s\n" rawname)
+        Unsupported -> if log_ignored_hyps () then Printf.printf "Dropped %s\n" rawname
     end
 
+
+(* does not reconstruct the proof at the moment *)
+let egg_cvc5 () =
+  Goal.enter begin fun gl ->
+    let sigma = Tacmach.project gl in
+    let env = Goal.env gl in
+    let hyps = Environ.named_context (Goal.env gl) in
+    let qa = empty_query_accumulator () in
+    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
+    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+    let b = FileBasedSmtBackend.create () in
+    apply_query_accumulator qa (module FileBasedSmtBackend) b;
+    let _pf = FileBasedSmtBackend.prove b (AProp g) in
+    tclUNIT ()
+    end
 
 let egg_simpl_goal ffn_limit =
   Goal.enter begin fun gl ->
@@ -753,42 +824,27 @@ let egg_simpl_goal ffn_limit =
 
     let qa = empty_query_accumulator () in
 
-    List.iter (fun hyp ->
-         eggify_hyp env sigma qa hyp)
-
-      (List.rev hyps);
+    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
     let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
 
-    let backends : (string, (module BACKEND)) Hashtbl.t = Hashtbl.create 17 in
-    Hashtbl.add backends "RecompilationBackend" (module RecompilationBackend : BACKEND);
-    Hashtbl.add backends "FileBasedSmtBackend" (module FileBasedSmtBackend : BACKEND);
-    let _TODO_use_backends = backends in
+    let (module B) = get_backend () in
 
-    let b_smt = FileBasedSmtBackend.create "/tmp/egraph_query.smt2" in
-    apply_query_accumulator qa (module FileBasedSmtBackend) b_smt;
-    let _ = FileBasedSmtBackend.prove b_smt (AProp g) in
+    let b = B.create () in
+    apply_query_accumulator qa (module B) b;
+    let pf = B.minimize b g ffn_limit in
 
-    let b_coquetier = FileBasedSmtBackend.create coquetier_input_path in
-    apply_query_accumulator qa (module Backend) b_coquetier;
-    let pf = Backend.minimize b_coquetier g ffn_limit in
-
-    (*
-    let b = RecompilationBackend.create () in
-    apply_query_accumulator qa (module Backend) b;
-    let pf = Backend.minimize b g ffn_limit in
-     *)
     (match pf with
     | PSteps(pf_steps) ->
       let reversed_pf = List.rev pf_steps in
       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-      if do_print_proofs then (
+      if log_proofs () then (
         print_endline "Composed proof:";
         print_endline (print_constr_expr env sigma composed_pf);
       ) else ();
       Refine.refine ~typecheck:true (fun sigma ->
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          if do_print_proofs then (
+          if log_proofs () then (
             Feedback.msg_notice
               Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
           ) else ();
@@ -797,7 +853,7 @@ let egg_simpl_goal ffn_limit =
        let reversed_pf = List.rev pf_steps in
        let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
        let ctr_coq = parse_constr_expr ctr in
-       if do_print_proofs then (
+       if log_proofs () then (
          print_endline "Contradiction proof:";
          print_endline ctr;
          print_endline "Composed proof of contradiction:";
@@ -805,7 +861,7 @@ let egg_simpl_goal ffn_limit =
        ) else ();
        let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
           let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          if do_print_proofs then (
+          if log_proofs () then (
             Feedback.msg_notice
               Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
           ) else ();
@@ -818,11 +874,6 @@ let egg_simpl_goal ffn_limit =
                Tacticals.tclTHENFIRST
                  (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
     end
-      (* Refine.refine ~typecheck:true (fun sigma ->
-          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          Feedback.msg_notice
-            Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          (sigma, constr_pf)) *)
 
 
 let kind_to_str sigma c =

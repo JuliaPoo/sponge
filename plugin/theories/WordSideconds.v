@@ -162,19 +162,37 @@ equality as well, just in more steps
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
+    Time egg_simpl_goal 6.
+    all: try assumption.
+    all: try exact I.
 
-    egg_simpl_goal 6.
+    Set Egg Backend "RecompilationBackend". (* makes it much slower *)
+    Time 1: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal 6.
+
+    Set Egg Log Ignored Hypotheses.
+    Set Egg Backend "FileBasedEggBackend".
+    1: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal 6.
+    Unset Egg Log Ignored Hypotheses.
+    Set Egg Log Proofs.
+    1: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
-    all: egg_simpl_goal 6.
+
+    Set Egg Backend "FileBasedSmtBackend". (* doesn't support proofs *)
+    (* clear Z_div_mul_lt. *)
+    egg_cvc5.
+    Set Egg Backend "FileBasedEggBackend". (* doesn't support proofs *)
+    Time 1: egg_simpl_goal 6.
+    Time 1: egg_simpl_goal 6.
+    Time 1: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
+    Time 1: egg_simpl_goal 6.
+    exact I.
   Time Qed. (* 0.024 secs *)
 
 (*

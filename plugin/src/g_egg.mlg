@@ -32,6 +32,11 @@ TACTIC EXTEND egg_simpl_goal
   { Test_tactic.egg_simpl_goal ffn_limit }
 END
 
+TACTIC EXTEND egg_cvc5
+| [ "egg_cvc5" ] ->
+  { Test_tactic.egg_cvc5 () }
+END
+
 TACTIC EXTEND inspect
 | [ "inspect" open_constr(c) ] ->
   { Test_tactic.inspect c }

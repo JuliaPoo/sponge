@@ -237,7 +237,7 @@ module FileBasedEggBackend : BACKEND = struct
     close_out t.oc;
     Printf.printf "Wrote %s\n" t.query_file_path;
     flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coquetier" in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
     let status = Sys.command command in
     Printf.printf "Command '%s' returned exit status %d\n" command status;
     proof_file_to_proof t.response_file_path
@@ -453,7 +453,7 @@ end
     close_out oc;
     Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
     flush stdout;
-    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && cargo run --release --bin coq" in
+    let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && time cargo run --release --bin coq" in
     let status = Sys.command cargo_command in
     Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
     if status != 0 then failwith "invoking rust failed"

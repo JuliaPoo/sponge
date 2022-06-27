@@ -57,3 +57,4 @@ Lemma prove_True_eq: forall (P: Prop), P -> True = P.
 Proof.
   intros. apply propositional_extensionality. split; auto.
 Qed.
+

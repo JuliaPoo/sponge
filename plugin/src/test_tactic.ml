@@ -47,10 +47,11 @@ let empty_query_accumulator () =
 
 (* only needed to create valid Rust enum names, not needed to translate back *)
 let make_rust_valid s =
-  Str.global_replace (Str.regexp "@") "AT"
-    (Str.global_replace (Str.regexp "\\.") "DOT"
-       (Str.global_replace (Str.regexp "&") "ID"
-          (Str.global_replace (Str.regexp "'") "PRIME" s)))
+  Str.global_replace (Str.regexp "!") "BANG" 
+    (Str.global_replace (Str.regexp "@") "AT"
+      (Str.global_replace (Str.regexp "\\.") "DOT"
+         (Str.global_replace (Str.regexp "&") "ID"
+            (Str.global_replace (Str.regexp "'") "PRIME" s))))
 
 let strip_pre_suff s prefix suffix =
   if String.starts_with ~prefix:prefix s && String.ends_with ~suffix:suffix s
@@ -503,7 +504,7 @@ let parse_constr_expr s =
   Pcoq.parse_string Pcoq.Constr.constr
     (* to avoid clashes of our names with SMT-defined names (eg and, not, true,
        we prefix them with &, and need to undo that here *)
-    (Str.global_replace (Str.regexp "&") "" s)
+    (Str.global_replace (Str.regexp "!") "" (Str.global_replace (Str.regexp "&") "" s))
 
 let print_constr_expr env sigma e =
   Pp.string_of_ppcmds (Ppconstr.pr_constr_expr env sigma e)
@@ -629,13 +630,13 @@ let rec process_expr env sigma fn_metadatas nameEnv e =
     if String.starts_with ~prefix:"?" name then
       Sexp.Atom name
     else (
-      let n = "&" ^ name in (* to avoid clashes with predefined names from smtlib *)
+      let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       Sexp.Atom n) in
   try
     (* treat Z literals as uninterpreted, so that they can have the same smtlib type U
        as everything else *)
-    let z = "&" ^ Stdlib.string_of_int (z_to_int sigma e) in
+    let z = "!" ^ Stdlib.string_of_int (z_to_int sigma e) in
     register_metadata fn_metadatas z { arity=0; is_nonprop_ctor = true};
     Sexp.Atom z
   with NotACoqNumber ->

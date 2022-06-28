@@ -47,7 +47,7 @@ let empty_query_accumulator () =
 
 (* only needed to create valid Rust enum names, not needed to translate back *)
 let make_rust_valid s =
-  Str.global_replace (Str.regexp "!") "BANG" 
+  Str.global_replace (Str.regexp "!") "BANG"
     (Str.global_replace (Str.regexp "@") "AT"
       (Str.global_replace (Str.regexp "\\.") "DOT"
          (Str.global_replace (Str.regexp "&") "ID"

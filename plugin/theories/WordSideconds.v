@@ -123,7 +123,9 @@ equality as well, just in more steps
     clear Z_forget_mod_in_lt_l.
     pose proof Z.le_lt_trans as Z_le_lt_trans.
     pose proof Z.mod_le as Z_mod_le.
-    egg_simpl_goal 5.
+    egg_simpl_goal 7. (* before, 5 was sufficient here, but now some loopy rules
+                         that very quickly generated relevant terms don't apply any
+                         more, and we have to take a longer path *)
     1: exact C1.
     4: exact I.
     (* transitivity leads to uninferrable evars! *)

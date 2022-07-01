@@ -37,6 +37,11 @@ TACTIC EXTEND egg_cvc5
   { Test_tactic.egg_cvc5 () }
 END
 
+TACTIC EXTEND egg_search_evars
+| [ "egg_search_evars" int(ffn_limit)] ->
+  { Test_tactic.egg_search_evars ffn_limit }
+END
+
 TACTIC EXTEND inspect
 | [ "inspect" open_constr(c) ] ->
   { Test_tactic.inspect c }

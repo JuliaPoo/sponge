@@ -1,4 +1,5 @@
 val egg_simpl_goal : int(* far-fetched-ness limit *) -> unit Proofview.tactic
+val egg_search_evars : int(* far-fetched-ness limit *) -> unit Proofview.tactic
 
 val egg_cvc5 : unit -> unit Proofview.tactic
 

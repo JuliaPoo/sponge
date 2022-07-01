@@ -34,6 +34,7 @@ type fn_metadata =
 type query_accumulator =
   { declarations: (string, fn_metadata) Hashtbl.t; (* arity of each function symbol, and is it a non-propositional constructor *)
     rules: rule Queue.t;
+    evar_constraints: (Sexp.t, unit) Hashtbl.t;
     initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
 let empty_query_accumulator () =
@@ -43,6 +44,7 @@ let empty_query_accumulator () =
   Hashtbl.replace ds "&False" { arity = 0; is_nonprop_ctor = false;};
   { declarations = ds;
     rules = Queue.create ();
+    evar_constraints =  Hashtbl.create 20;
     initial_exprs = Hashtbl.create 20 }
 
 (* only needed to create valid Rust enum names, not needed to translate back *)
@@ -65,7 +67,6 @@ let proof_file_to_proof filepath =
   let chan = open_in filepath in
   let contradiction = ref None in
   let fst_line = input_line chan in
-
   (if String.starts_with ~prefix:"(* CONTRADICTION *)" fst_line
    then
       let line = input_line chan in
@@ -90,6 +91,10 @@ let proof_file_to_proof filepath =
   match !contradiction with
   | Some(c) -> PContradiction(c, List.rev !res)
   | None -> PSteps (List.rev !res)
+
+
+let evar_instantiate_from_file filepath =
+  assert false
 
 let assertion_to_smtlib a =
   match a with
@@ -142,7 +147,9 @@ module type BACKEND =
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
+    val declare_evar_constraint : t -> Sexp.t -> unit
     val minimize: t -> Sexp.t -> int -> proof
+    val search_evar : t -> Sexp.t -> int -> unit 
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -182,9 +189,13 @@ module FileBasedSmtBackend : BACKEND = struct
   let declare_initial_expr t e =
     Sexp.output t.oc (smtlib_initial_expr e);
     Printf.fprintf t.oc "\n"
+  
+  let declare_evar_constraint t e = assert false
 
   let minimize t e ffn_limit =
     failwith "not supported"
+
+  let search_evar t e ffn_limit = assert false
 
   let prove t a =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "assert";
@@ -231,6 +242,8 @@ module FileBasedEggBackend : BACKEND = struct
     Sexp.output t.oc (smtlib_initial_expr e);
     Printf.fprintf t.oc "\n"
 
+  let declare_evar_constraint t e = assert false
+
   let minimize t e ffn_limit =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "minimize";
                                  e; Sexp.Atom (string_of_int ffn_limit)]);
@@ -242,6 +255,19 @@ module FileBasedEggBackend : BACKEND = struct
     let status = Sys.command command in
     Printf.printf "Command '%s' returned exit status %d\n" command status;
     proof_file_to_proof t.response_file_path
+
+  let search_evar t e ffn_limit =
+    Sexp.output t.oc (Sexp.List [Sexp.Atom "search";
+                                 e; Sexp.Atom (string_of_int ffn_limit)]);
+    Printf.fprintf t.oc "\n";
+    close_out t.oc;
+    Printf.printf "Wrote %s\n" t.query_file_path;
+    flush stdout;
+    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
+    let status = Sys.command command in
+    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    evar_instantiate_from_file  t.response_file_path
+
 
   let prove t a =
     failwith "not supported"
@@ -257,6 +283,7 @@ end
 let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (m: bt) =
   Hashtbl.iter (B.declare_fun m) qa.declarations;
   Queue.iter (B.declare_rule m) qa.rules;
+  Hashtbl.iter (fun e () -> B.declare_evar_constraint m e) qa.evar_constraints;
   Hashtbl.iter (fun e () -> B.declare_initial_expr m e) qa.initial_exprs
 
 (* Once created, supports interactions satisfying the following regex:
@@ -437,6 +464,8 @@ end
     Sexp.to_buffer ~buf:t.buf e;
     Buffer.add_string t.buf "\",\n"
 
+  let declare_evar_constraint t e = assert false
+
   let minimize t e ffn_limit =
     (match t.state with
      | SDeclaringInitialExprs -> ()
@@ -461,6 +490,8 @@ end
     else t.state <- SDone;
     let pf = proof_file_to_proof recompilation_proof_file_path in
     pf
+
+  let search_evar t e ffn_limit = assert false
 
   let prove t a = failwith "not supported yet"
 
@@ -875,6 +906,66 @@ let egg_simpl_goal ffn_limit =
                Tacticals.tclTHENFIRST
                  (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
     end
+let egg_search_evars ffn_limit =
+  Goal.enter begin fun gl ->
+    let sigma = Tacmach.project gl in
+    let env = Goal.env gl in
+    let hyps = Environ.named_context (Goal.env gl) in
+
+    let qa = empty_query_accumulator () in
+
+    (* query accumulator *)
+    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
+
+    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+
+    let (module B) = get_backend () in
+
+    let b = B.create () in
+    apply_query_accumulator qa (module B) b;
+    let pf = B.minimize b g ffn_limit in
+
+    (match pf with
+    | PSteps(pf_steps) ->
+      let reversed_pf = List.rev pf_steps in
+      let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+      if log_proofs () then (
+        print_endline "Composed proof:";
+        print_endline (print_constr_expr env sigma composed_pf);
+      ) else ();
+      Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          if log_proofs () then (
+            Feedback.msg_notice
+              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          ) else ();
+          (sigma, constr_pf))
+    | PContradiction(ctr, pf_steps) ->
+       let reversed_pf = List.rev pf_steps in
+       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
+       let ctr_coq = parse_constr_expr ctr in
+       if log_proofs () then (
+         print_endline "Contradiction proof:";
+         print_endline ctr;
+         print_endline "Composed proof of contradiction:";
+         print_endline (print_constr_expr env sigma composed_pf);
+       ) else ();
+       let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
+          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
+          if log_proofs () then (
+            Feedback.msg_notice
+              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
+          ) else ();
+          (sigma, constr_pf)) in
+       let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
+       tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type")))
+         (fun coqfalse ->
+           Tacticals.tclTHENLIST
+             [ Tactics.elim_type coqfalse;
+               Tacticals.tclTHENFIRST
+                 (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
+    end
+
 
 
 let kind_to_str sigma c =

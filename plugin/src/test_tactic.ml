@@ -147,9 +147,9 @@ module type BACKEND =
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
-    val declare_evar_constraint : t -> Sexp.t -> unit
+    (* val declare_evar_constraint : t -> Sexp.t -> unit *)
     val minimize: t -> Sexp.t -> int -> proof
-    val search_evar : t -> Sexp.t -> int -> unit 
+    val search_evars : t -> Sexp.t -> int -> string 
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -190,12 +190,12 @@ module FileBasedSmtBackend : BACKEND = struct
     Sexp.output t.oc (smtlib_initial_expr e);
     Printf.fprintf t.oc "\n"
   
-  let declare_evar_constraint t e = assert false
+  (* let declare_evar_constraint t e = assert false *)
 
   let minimize t e ffn_limit =
     failwith "not supported"
 
-  let search_evar t e ffn_limit = assert false
+  let search_evars t e ffn_limit = assert false
 
   let prove t a =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "assert";
@@ -242,7 +242,7 @@ module FileBasedEggBackend : BACKEND = struct
     Sexp.output t.oc (smtlib_initial_expr e);
     Printf.fprintf t.oc "\n"
 
-  let declare_evar_constraint t e = assert false
+  (* let declare_evar_constraint t e = assert false *)
 
   let minimize t e ffn_limit =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "minimize";
@@ -256,7 +256,7 @@ module FileBasedEggBackend : BACKEND = struct
     Printf.printf "Command '%s' returned exit status %d\n" command status;
     proof_file_to_proof t.response_file_path
 
-  let search_evar t e ffn_limit =
+  let search_evars t e ffn_limit =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "search";
                                  e; Sexp.Atom (string_of_int ffn_limit)]);
     Printf.fprintf t.oc "\n";
@@ -283,7 +283,7 @@ end
 let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (m: bt) =
   Hashtbl.iter (B.declare_fun m) qa.declarations;
   Queue.iter (B.declare_rule m) qa.rules;
-  Hashtbl.iter (fun e () -> B.declare_evar_constraint m e) qa.evar_constraints;
+  (* Hashtbl.iter (fun e () -> B.declare_evar_constraint m e) qa.evar_constraints; *)
   Hashtbl.iter (fun e () -> B.declare_initial_expr m e) qa.initial_exprs
 
 (* Once created, supports interactions satisfying the following regex:
@@ -464,7 +464,7 @@ end
     Sexp.to_buffer ~buf:t.buf e;
     Buffer.add_string t.buf "\",\n"
 
-  let declare_evar_constraint t e = assert false
+  (* let declare_evar_constraint t e = assert false *)
 
   let minimize t e ffn_limit =
     (match t.state with
@@ -491,7 +491,7 @@ end
     let pf = proof_file_to_proof recompilation_proof_file_path in
     pf
 
-  let search_evar t e ffn_limit = assert false
+  let search_evars t e ffn_limit = assert false
 
   let prove t a = failwith "not supported yet"
 
@@ -632,7 +632,7 @@ let has_implicit_args gref =
 let implicits_prefix r =
   if has_implicit_args r then "@" else ""
 
-let rec process_expr env sigma fn_metadatas nameEnv e =
+let rec process_expr (handle_evar : bool) env sigma fn_metadatas nameEnv e = 
   let ind_to_str i =
     let r = Names.GlobRef.IndRef i in
     implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
@@ -644,6 +644,9 @@ let rec process_expr env sigma fn_metadatas nameEnv e =
     implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
+  let evar_to_str i =
+    let r = Evar.print i in
+    Pp.string_of_ppcmds r in
   (* Note: arity is determined by usage, not by type, because some function (eg sep)
      might always be used partially applied (we require the same arity at all usages) *)
   let process_atom e arity =
@@ -657,6 +660,10 @@ let rec process_expr env sigma fn_metadatas nameEnv e =
          let sigma, tp = Typing.type_of env sigma e in
          (ctor_to_str ctor, not (Termops.is_Prop sigma tp))
       | Constr.Sort s -> (sort_to_str s, false)
+      | Constr.Evar (key, _evar_cstrs) -> 
+        if handle_evar then 
+          (evar_to_str key, false)
+        else raise Unsupported
       | _ -> raise Unsupported in
     if String.starts_with ~prefix:"?" name then
       Sexp.Atom name
@@ -674,9 +681,10 @@ let rec process_expr env sigma fn_metadatas nameEnv e =
         match EConstr.kind sigma e with
         | Constr.App (f, args) ->
            Sexp.List (process_atom f (Array.length args) ::
-                        List.map (process_expr env sigma fn_metadatas nameEnv)
+                        List.map (process_expr handle_evar env sigma fn_metadatas nameEnv )
                           (Array.to_list args))
         | _ -> process_atom e 0
+        
 
 let destruct_eq sigma t =
   match EConstr.kind sigma t with
@@ -732,12 +740,12 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
   let to_assertion nameEnv t =
     let e1, e2, res = match destruct_eq sigma t with
       | Some (_, lhs, rhs) ->
-         let lhs' = process_expr env sigma qa.declarations nameEnv lhs in
-         let rhs' = process_expr env sigma qa.declarations nameEnv rhs in
+         let lhs' = process_expr false env sigma qa.declarations nameEnv lhs in
+         let rhs' = process_expr false env sigma qa.declarations nameEnv rhs in
          (lhs', rhs', AEq (lhs', rhs'))
       | None ->
          let lhs' = Sexp.Atom "&True" in
-         let rhs' = process_expr env sigma qa.declarations nameEnv t in
+         let rhs' = process_expr false env sigma qa.declarations nameEnv t in
          (lhs', rhs', AProp rhs') in
   (* Register all the quantifier frees subexprs of e1 and e2 *)
 
@@ -772,7 +780,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
   let rec process_impls name nameEnv sideconditions manual_triggers t =
     match destruct_trigger sigma t with
     | Some (tr_exprs, body) ->
-       let tr_sexprs = List.map (process_expr env sigma qa.declarations nameEnv) tr_exprs in
+       let tr_sexprs = List.map (process_expr false env sigma qa.declarations nameEnv) tr_exprs in
        process_impls name nameEnv sideconditions (List.append manual_triggers tr_sexprs) body
     | None ->
       match EConstr.kind sigma t with
@@ -819,7 +827,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
         let name = "&" ^ rawname in
         register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
-        let rhs = process_expr env sigma qa.declarations [] (EConstr.of_constr t) in
+        let rhs = process_expr false env sigma qa.declarations [] (EConstr.of_constr t) in
         register_expr lhs;
         register_expr rhs;
         Queue.push { rulename = rawname ^ "$def";
@@ -841,7 +849,7 @@ let egg_cvc5 () =
     let hyps = Environ.named_context (Goal.env gl) in
     let qa = empty_query_accumulator () in
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
-    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr false env sigma qa.declarations [] (Goal.concl gl) in
     let b = FileBasedSmtBackend.create () in
     apply_query_accumulator qa (module FileBasedSmtBackend) b;
     let _pf = FileBasedSmtBackend.prove b (AProp g) in
@@ -858,7 +866,7 @@ let egg_simpl_goal ffn_limit =
 
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
-    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr false env sigma qa.declarations [] (Goal.concl gl) in
 
     let (module B) = get_backend () in
 
@@ -914,58 +922,26 @@ let egg_search_evars ffn_limit =
 
     let qa = empty_query_accumulator () in
 
-    (* query accumulator *)
+    (* We hope that there is nohypothesis with evars, otherwise we are in trouble *)
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
-    let g = process_expr env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr true env sigma qa.declarations [] (Goal.concl gl) in
+
+    (* For now we don't have hypothesis that contains evars, to avoid compiler complaining about unused evar_constraints,
+       we put something dummy there. This will be removed replaced by code that handle hypothesis with evars. *)
+    Hashtbl.replace qa.evar_constraints g ();
 
     let (module B) = get_backend () in
 
     let b = B.create () in
     apply_query_accumulator qa (module B) b;
-    let pf = B.minimize b g ffn_limit in
+    let pf = B.search_evars b g ffn_limit in
+    Feedback.msg_notice
+      Pp.(str"Suggested instantiation: " ++ str pf);
+    Proofview.tclUNIT ()
+  end
 
-    (match pf with
-    | PSteps(pf_steps) ->
-      let reversed_pf = List.rev pf_steps in
-      let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-      if log_proofs () then (
-        print_endline "Composed proof:";
-        print_endline (print_constr_expr env sigma composed_pf);
-      ) else ();
-      Refine.refine ~typecheck:true (fun sigma ->
-          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          if log_proofs () then (
-            Feedback.msg_notice
-              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          ) else ();
-          (sigma, constr_pf))
-    | PContradiction(ctr, pf_steps) ->
-       let reversed_pf = List.rev pf_steps in
-       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
-       let ctr_coq = parse_constr_expr ctr in
-       if log_proofs () then (
-         print_endline "Contradiction proof:";
-         print_endline ctr;
-         print_endline "Composed proof of contradiction:";
-         print_endline (print_constr_expr env sigma composed_pf);
-       ) else ();
-       let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
-          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          if log_proofs () then (
-            Feedback.msg_notice
-              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          ) else ();
-          (sigma, constr_pf)) in
-       let (_sigma, t_ctr) = (Constrintern.interp_constr_evars env sigma ctr_coq) in
-       tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type")))
-         (fun coqfalse ->
-           Tacticals.tclTHENLIST
-             [ Tactics.elim_type coqfalse;
-               Tacticals.tclTHENFIRST
-                 (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
-    end
-
+    
 
 
 let kind_to_str sigma c =

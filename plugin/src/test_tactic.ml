@@ -94,7 +94,18 @@ let proof_file_to_proof filepath =
 
 
 let evar_instantiate_from_file filepath =
-  assert false
+  let res = ref [] in
+  let chan = open_in filepath in
+  let line = ref (input_line chan) in
+  (try
+    while true do
+      res := !line :: !res;
+      line := input_line chan
+    done
+  with End_of_file -> ());
+  close_in chan;
+  String.concat "" !res
+
 
 let assertion_to_smtlib a =
   match a with

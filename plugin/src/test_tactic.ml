@@ -618,13 +618,6 @@ let z_to_int sigma e =
 
 exception Unsupported
 
-let lookup_name nameEnv index =
-  List.nth nameEnv (index - 1)
-
-let rec drop_leading_empty_strings nameEnv =
-  match nameEnv with
-  | [] -> []
-  | h :: t -> if h = "" then drop_leading_empty_strings t else nameEnv
 
 let register_metadata metadata f n =
   match Hashtbl.find_opt metadata f with
@@ -643,7 +636,7 @@ let has_implicit_args gref =
 let implicits_prefix r =
   if has_implicit_args r then "@" else ""
 
-let rec process_expr (handle_evar : bool) env sigma fn_metadatas nameEnv e = 
+let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadatas e = 
   let ind_to_str i =
     let r = Names.GlobRef.IndRef i in
     implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
@@ -660,14 +653,21 @@ let rec process_expr (handle_evar : bool) env sigma fn_metadatas nameEnv e =
     Pp.string_of_ppcmds r in
   (* Note: arity is determined by usage, not by type, because some function (eg sep)
      might always be used partially applied (we require the same arity at all usages) *)
-  let process_atom e arity =
+  let process_atom show_types e arity =
     let name, is_nonprop_ctor = match EConstr.kind sigma e with
-      | Constr.Rel i -> ("?" ^ lookup_name nameEnv i, false)
+      | Constr.Rel i -> 
+          let rel_decl = Environ.lookup_rel i env in 
+          let n = (match rel_decl with 
+              | Context.Rel.Declaration.LocalAssum(n, t) -> 
+                  binder_name_to_string n
+              | Context.Rel.Declaration.LocalDef(_,_,_) -> assert false) in
+          ("?" ^ n, false)
       | Constr.Var id -> (Names.Id.to_string id, false)
       | Constr.Ind (i, univs) -> (ind_to_str i, false)
       | Constr.Const (c, univs) -> (const_to_str c, false)
       | Constr.Construct (ctor, univs) ->
         (* TODO thread sigma properly *)
+        (* This is false, likely *)
          let sigma, tp = Typing.type_of env sigma e in
          (ctor_to_str ctor, not (Termops.is_Prop sigma tp))
       | Constr.Sort s -> (sort_to_str s, false)
@@ -675,26 +675,59 @@ let rec process_expr (handle_evar : bool) env sigma fn_metadatas nameEnv e =
         if handle_evar then 
           (evar_to_str key, false)
         else raise Unsupported
-      | _ -> raise Unsupported in
+      | _ -> 
+        (*  *)
+        let unk = Pp.string_of_ppcmds (Printer.pr_econstr_env env  sigma e) in 
+        Printf.printf "Unsupported Atom %s\n" unk;
+        raise Unsupported in
     if String.starts_with ~prefix:"?" name then
-      Sexp.Atom name
+      (
+        if not show_types then 
+        Sexp.Atom name
+      else
+        let sigma, tp = Typing.type_of env sigma e in
+        Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
+                  process_expr false true env sigma fn_metadatas tp])
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
-      Sexp.Atom n) in
+      if show_types && arity = 0 then 
+        let sigma, tp = Typing.type_of env sigma e in
+        Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; 
+                                      process_expr false true env sigma fn_metadatas tp] 
+       else
+            Sexp.Atom n) 
+                                    in
+      (* Sexp.Atom "annot" (Sexp.List [Sexp.Atom n; type_to_sexp tp]) in *)
   try
     (* treat Z literals as uninterpreted, so that they can have the same smtlib type U
        as everything else *)
+    let sigma, tp = Typing.type_of env sigma e in
     let z = "!" ^ Stdlib.string_of_int (z_to_int sigma e) in
     register_metadata fn_metadatas z { arity=0; is_nonprop_ctor = true};
-    Sexp.Atom z
+    (if is_type then 
+      Sexp.Atom z
+      else
+         Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
+                    process_expr false true env sigma fn_metadatas tp]))
   with NotACoqNumber ->
+        let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
         | Constr.App (f, args) ->
-           Sexp.List (process_atom f (Array.length args) ::
-                        List.map (process_expr handle_evar env sigma fn_metadatas nameEnv )
+            if is_type then 
+            Sexp.List (process_atom false f (Array.length args) ::
+                        List.map (process_expr handle_evar is_type env sigma fn_metadatas)
                           (Array.to_list args))
-        | _ -> process_atom e 0
+            else  
+             Sexp.List ([Sexp.Atom "annot"; Sexp.List (process_atom false f (Array.length args) ::
+                        List.map (process_expr handle_evar is_type env sigma fn_metadatas )
+                          (Array.to_list args)); 
+                          (* No evar in types? *)
+                        process_expr false true env sigma fn_metadatas tp])
+        | _ -> 
+            if is_type then 
+                process_atom false e 0
+          else process_atom true e 0
         
 
 let destruct_eq sigma t =
@@ -748,15 +781,15 @@ let destruct_trigger sigma t =
 let eggify_hyp env sigma (qa: query_accumulator) hyp =
   let register_expr e = Hashtbl.replace qa.initial_exprs e () in
 
-  let to_assertion nameEnv t =
+  let to_assertion env t =
     let e1, e2, res = match destruct_eq sigma t with
       | Some (_, lhs, rhs) ->
-         let lhs' = process_expr false env sigma qa.declarations nameEnv lhs in
-         let rhs' = process_expr false env sigma qa.declarations nameEnv rhs in
+         let lhs' = process_expr false false env sigma qa.declarations lhs in
+         let rhs' = process_expr false false env sigma qa.declarations rhs in
          (lhs', rhs', AEq (lhs', rhs'))
       | None ->
          let lhs' = Sexp.Atom "&True" in
-         let rhs' = process_expr false env sigma qa.declarations nameEnv t in
+         let rhs' = process_expr false false env sigma qa.declarations t in
          (lhs', rhs', AProp rhs') in
   (* Register all the quantifier frees subexprs of e1 and e2 *)
 
@@ -788,34 +821,54 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     List.iter register_expr (biggest_closed_subexprs e2);
     res in
 
-  let rec process_impls name nameEnv sideconditions manual_triggers t =
+  let rec process_impls name env sideconditions manual_triggers t =
     match destruct_trigger sigma t with
     | Some (tr_exprs, body) ->
-       let tr_sexprs = List.map (process_expr false env sigma qa.declarations nameEnv) tr_exprs in
-       process_impls name nameEnv sideconditions (List.append manual_triggers tr_sexprs) body
+       let tr_sexprs = List.map (process_expr false false env sigma qa.declarations) tr_exprs in
+       process_impls name env sideconditions (List.append manual_triggers tr_sexprs) body
     | None ->
       match EConstr.kind sigma t with
       | Constr.Prod (b, tp, body) ->
+
+          Printf.printf "Pass below impl" ;
          if EConstr.Vars.noccurn sigma 1 body then
-           let side = to_assertion nameEnv tp in
-           process_impls name ("" :: nameEnv) (side :: sideconditions) manual_triggers body
+           let side = to_assertion env tp in
+           let env = EConstr.push_rel 
+                        (* Maybe we can just push the binder b directly, instead of
+                        making an anonymous binder? *) 
+                        (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp))
+                        env in
+           process_impls name env (side :: sideconditions) manual_triggers body
          else raise Unsupported (* foralls after impls are not supported *)
-      | _ -> Queue.push {
+      | _ -> 
+        let quant_names = Environ.fold_rel_context 
+              (fun _ rel_decl acc -> match rel_decl with 
+                                     | Context.Rel.Declaration.LocalAssum(n, t) -> 
+                                        (match Context.binder_name n with 
+                                        | Names.Anonymous -> acc
+                                        | Names.Name(t) -> (binder_name_to_string n)::acc)
+                                     | Context.Rel.Declaration.LocalDef(_,_,_) -> acc)
+              env ~init:([]) in
+        Printf.printf "Add rule" ;
+        Queue.push {
                  rulename = name;
-                 quantifiers = List.rev (drop_leading_empty_strings nameEnv);
+                 quantifiers = List.rev quant_names;
                  sideconditions = List.rev sideconditions;
-                 conclusion = to_assertion nameEnv t;
+                 conclusion = to_assertion env t;
                  triggers = manual_triggers;
                } qa.rules in
 
-  let rec process_foralls name nameEnv t =
+  let rec process_foralls name env t =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         process_impls name nameEnv [] [] t
+         (Printf.printf "Pass below false forall" ;
+         process_impls name env [] [] t)
        else
-         process_foralls name (binder_name_to_string b :: nameEnv) body
-    | _ -> process_impls name nameEnv [] [] t in
+         (Printf.printf "Pass below forall";
+         let env = EConstr.push_rel (Context.Rel.Declaration.LocalAssum (b, tp)) env in
+         process_foralls name env body)
+    | _ -> process_impls name env [] [] t in
 
   let open Context in
   let open Named.Declaration in
@@ -827,7 +880,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
       try
         let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
         if Termops.is_Prop sigma tp then
-          process_foralls name [] (EConstr.of_constr t)
+          process_foralls name env (EConstr.of_constr t)
         else raise Unsupported
       with
         Unsupported -> if log_ignored_hyps () then Printf.printf "Dropped %s\n" name
@@ -838,7 +891,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
         let name = "&" ^ rawname in
         register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
-        let rhs = process_expr false env sigma qa.declarations [] (EConstr.of_constr t) in
+        let rhs = process_expr false false env sigma qa.declarations (EConstr.of_constr t) in
         register_expr lhs;
         register_expr rhs;
         Queue.push { rulename = rawname ^ "$def";
@@ -860,7 +913,7 @@ let egg_cvc5 () =
     let hyps = Environ.named_context (Goal.env gl) in
     let qa = empty_query_accumulator () in
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
-    let g = process_expr false env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in
     let b = FileBasedSmtBackend.create () in
     apply_query_accumulator qa (module FileBasedSmtBackend) b;
     let _pf = FileBasedSmtBackend.prove b (AProp g) in
@@ -877,7 +930,7 @@ let egg_simpl_goal ffn_limit =
 
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
-    let g = process_expr false env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in
 
     let (module B) = get_backend () in
 
@@ -936,7 +989,7 @@ let egg_search_evars ffn_limit =
     (* We hope that there is nohypothesis with evars, otherwise we are in trouble *)
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
-    let g = process_expr true env sigma qa.declarations [] (Goal.concl gl) in
+    let g = process_expr true false env sigma qa.declarations (Goal.concl gl) in
 
     (* For now we don't have hypothesis that contains evars, to avoid compiler complaining about unused evar_constraints,
        we put something dummy there. This will be removed replaced by code that handle hypothesis with evars. *)

@@ -15,10 +15,13 @@ type assertion =
   | PSteps of string list
   | PContradiction of string * string list
 
+let true_typed = 
+  Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"]
+
 let assertion_to_equality a =
   match a with
   | AEq (lhs, rhs) -> (lhs, rhs)
-  | AProp e -> (Sexp.Atom "&True", e)
+  | AProp e -> (true_typed, e)
 
 type rule =
   { rulename: string;
@@ -40,6 +43,7 @@ type query_accumulator =
 let empty_query_accumulator () =
   let ds = Hashtbl.create 20 in
   (* always-present constants (even if they don't appear in any expression) *)
+  Hashtbl.replace ds "annot" { arity = 2; is_nonprop_ctor = false;};
   Hashtbl.replace ds "&True" { arity = 0; is_nonprop_ctor = false;};
   Hashtbl.replace ds "&False" { arity = 0; is_nonprop_ctor = false;};
   { declarations = ds;
@@ -111,7 +115,7 @@ let assertion_to_smtlib a =
   match a with
   | AEq (lhs, rhs) -> Sexp.List [Sexp.Atom "="; lhs; rhs]
   | AProp e -> (* e is of type U, but we need to convert it to `Bool`: *)
-     Sexp.List [Sexp.Atom "="; Sexp.Atom "&True"; e]
+     Sexp.List [Sexp.Atom "="; true_typed ; e]
 
 (* (! body tag value) *)
 let smtlib_annot body tag value =
@@ -788,7 +792,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
          let rhs' = process_expr false false env sigma qa.declarations rhs in
          (lhs', rhs', AEq (lhs', rhs'))
       | None ->
-         let lhs' = Sexp.Atom "&True" in
+         let lhs' = true_typed in
          let rhs' = process_expr false false env sigma qa.declarations t in
          (lhs', rhs', AProp rhs') in
   (* Register all the quantifier frees subexprs of e1 and e2 *)
@@ -927,7 +931,18 @@ let egg_simpl_goal ffn_limit =
     let hyps = Environ.named_context (Goal.env gl) in
 
     let qa = empty_query_accumulator () in
-
+    (* Queue.push { rulename = "rm_annot";
+                quantifiers = ["a"; "t"];
+                sideconditions = [];
+                conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
+                triggers = [] } qa.rules; *)
+    (* Queue.push { rulename = "eq_annot";
+                quantifiers = ["a"; "t"];
+                sideconditions = [ AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"] , Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"])];
+                conclusion = AEq (true_typed, Sexp.List [Sexp.Atom "annot"; 
+                                                          Sexp.List [Sexp.Atom "&@eq"; Sexp.Atom "?a"; Sexp.Atom "?t"; Sexp.Atom "?t"];
+                                                        Sexp.Atom "&Prop"]);
+                triggers = [] } qa.rules; *)
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
     let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in

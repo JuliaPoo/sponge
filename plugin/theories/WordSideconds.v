@@ -116,16 +116,20 @@ equality as well, just in more steps
       unsigned (wsub x2 x1) <> 0 ->
       unsigned (wsub (wadd x1 (wslu (wsru (wsub x2 x1) (ZToWord 4)) (ZToWord 3))) x1) <
         unsigned (ZToWord 8) * Z.of_nat (length x).
-
+  Lemma rm_annot : forall t (x:t) , x = x.
+  trivial. Qed.
   Lemma bsearch_goal1_proof_with_transitivity: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
     clear Z_forget_mod_in_lt_l.
     pose proof Z.le_lt_trans as Z_le_lt_trans.
     pose proof Z.mod_le as Z_mod_le.
-    egg_simpl_goal 5.
+    egg_simpl_goal 6.
     1: exact C1.
-    4: exact I.
+    simpl.
+
+    egg_simpl_goal 6.
+    (* 4: exact I. *)
     (* transitivity leads to uninferrable evars! *)
   Abort.
 
@@ -159,25 +163,42 @@ equality as well, just in more steps
     let c := open_constr:(@id _ _) in inspect c.
   Abort.
 
+
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
     Time egg_simpl_goal 6.
     all: try assumption.
+    simpl.
+    Abort.
+    (* rewrite unsigned_slu_to_mul_pow2; eauto.
+    rewrite unsigned_sru_to_div_pow2; eauto.
+    apply Z_forget_mod_in_lt_l; try assumption.
+    - Time egg_simpl_goal 7; try assumption.
+    + Time egg_simpl_goal 7; try assumption.
+    * Time egg_simpl_goal 7; try assumption.
+        { egg_simpl_goal 4. }
+
+    all: try assumption.
+    simpl.
+    
+    Time egg_simpl_goal 6.
     all: try exact I.
 
+
     Set Egg Backend "RecompilationBackend". (* makes it much slower *)
-    Time 1: egg_simpl_goal 6.
-    all: try assumption.
-    all: try exact I.
+    (* Time 1: egg_simpl_goal 6. *)
+    (* all: try assumption. *)
+    (* all: try exact I. *)
 
     Set Egg Log Ignored Hypotheses.
     Set Egg Backend "FileBasedEggBackend".
-    1: egg_simpl_goal 6.
-    all: try assumption.
-    all: try exact I.
+    (* 1: egg_simpl_goal 6. *)
+    (* all: try assumption. *)
+    (* all: try exact I. *)
     Unset Egg Log Ignored Hypotheses.
     Set Egg Log Proofs.
+    simpl.
     1: egg_simpl_goal 6.
     all: try assumption.
     all: try exact I.
@@ -193,7 +214,7 @@ equality as well, just in more steps
     all: try exact I.
     Time 1: egg_simpl_goal 6.
     exact I.
-  Time Qed. (* 0.024 secs *)
+  Time Qed. 0.024 secs *)
 
 (*
 

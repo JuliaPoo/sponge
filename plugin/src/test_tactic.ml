@@ -81,8 +81,8 @@ let proof_file_to_proof filepath =
     else
      ());
   ignore(input_line chan);
-  let line = ref (input_line chan) in
   (try
+    let line = ref (input_line chan) in
     while not (String.starts_with ~prefix:"idtac" !line); do
       let prefix = "eapply " in
       let suffix = ";" in
@@ -100,8 +100,8 @@ let proof_file_to_proof filepath =
 let evar_instantiate_from_file filepath =
   let res = ref [] in
   let chan = open_in filepath in
-  let line = ref (input_line chan) in
   (try
+    let line = ref (input_line chan) in
     while true do
       res := !line :: !res;
       line := input_line chan

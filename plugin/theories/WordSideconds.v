@@ -161,6 +161,19 @@ equality as well, just in more steps
     let c := open_constr:(@id _ _) in inspect c.
   Abort.
 
+  Lemma bsearch_goal1_proof_egg_small_steps: bsearch_goal1.
+  Proof.
+    unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
+    all: egg_simpl_goal 3.
+    all: cbv beta; try assumption; try exact I.
+    all: egg_simpl_goal 3.
+    all: cbv beta; try assumption; try exact I.
+    all: egg_simpl_goal 3.
+    all: cbv beta; try assumption; try exact I.
+    all: egg_simpl_goal 3.
+    all: cbv beta; try assumption; try exact I.
+  Qed.
+
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.

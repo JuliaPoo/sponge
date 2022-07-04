@@ -126,10 +126,8 @@ equality as well, just in more steps
     pose proof Z.mod_le as Z_mod_le.
     egg_simpl_goal 6.
     1: exact C1.
-    simpl.
-
     (* egg_simpl_goal 6. *)
-    (* 4: exact I. *)
+    4: exact I.
     (* transitivity leads to uninferrable evars! *)
   Abort.
 
@@ -169,64 +167,58 @@ equality as well, just in more steps
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
     Time egg_simpl_goal 6.
     all: try assumption.
-    simpl.
-    Time egg_simpl_goal 6.
-    rewrite unsigned_slu_to_mul_pow2; eauto.
-    rewrite unsigned_sru_to_div_pow2; eauto.
-assert (forall {t: Set} (x y : t), (x<>y) -> (y <> x)).
+    { 
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+    }
+    {
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+    }
+    try exact I.
+      (* egg_simpl_goal 6;  try assumption; intuition eauto.
+      assert (forall {t: Type} (x y : t), (x<>y) -> (y <> x)).
         {intros.
           intuition eauto. 
         }
+      rewrite Z.lt_from_le_and_neq.
 
-Time egg_simpl_goal 7;  try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7;  try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7;  try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7;  try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7;  try solve [ simpl; intuition trivial].
-    apply Z_forget_mod_in_lt_l; try assumption.
-    (* 2:{
-Time egg_simpl_goal 7; try assumption; eauto.
-     } *)
-    - Time egg_simpl_goal 7; try assumption; eauto; try solve [ simpl; intuition trivial].
-    + Time egg_simpl_goal 7; try assumption; eauto; try solve [ simpl; intuition trivial].
-    * Time egg_simpl_goal 7; simpl; try assumption; intuition trivial.
-    - 
+      egg_simpl_goal 6;  try assumption; intuition eauto.
+    egg_simpl_goal 6;  try assumption; intuition eauto.
 
-Time egg_simpl_goal 7; try assumption; try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7; try assumption; try solve [ simpl; intuition trivial].
-all: egg_simpl_goal 7; try assumption; try solve [ simpl; intuition trivial].
-Time egg_simpl_goal 7; try assumption; eauto.
-simpl.
-      eapply Z_div_mul_lt; try assumption.
-
-Time egg_simpl_goal 7; try assumption; eauto.
-      + Time egg_simpl_goal 7; try assumption; eauto.
-        simpl.
-       
-
- Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
-        assert (0 <> unsigned (wsub x2 x1) ).
-{
- Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
-}
- Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
- all:egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
- Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
-
-
-        apply Z_lt_from_le_and_neq.
-        * Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
-        * Time egg_simpl_goal 7; try assumption; eauto;  try solve [ simpl; intuition trivial].
-
-
-
-
-
-
-
+    Time egg_simpl_goal 6.
     all: try assumption.
-    simpl.
-    
+   
+    cbv beta.
+
+    egg_simpl_goal 6;  try assumption; intuition eauto.
+     all : egg_simpl_goal 6; try assumption; intuition eauto.
+     all : egg_simpl_goal 6; try assumption; intuition eauto.
+    (* rewrite unsigned_sru_to_div_pow2; eauto. *)
+     egg_simpl_goal 7; try assumption; intuition eauto.
+    apply Z_forget_mod_in_lt_l; eauto.
+    {
+
+    egg_simpl_goal 6;  try assumption; intuition eauto.
+    egg_simpl_goal 6;  try assumption; intuition eauto.
+    egg_simpl_goal 6;  try assumption; intuition eauto.
+
+    -  egg_simpl_goal 6; try assumption; intuition eauto.
+     all : egg_simpl_goal 6; try assumption; intuition eauto.
+
+      + egg_simpl_goal 6; try assumption; eauto.
+
+      * egg_simpl_goal 6.
+     all: 
+    {
+      egg_simpl_goal 6.
+    }
+    all: egg_simpl_goal 6; simpl; try assumption.
+    all: egg_simpl_goal 6.
+    all: try assumption.
+
     Time egg_simpl_goal 6.
     all: try exact I.
 
@@ -258,8 +250,8 @@ Time egg_simpl_goal 7; try assumption; eauto.
     all: try assumption.
     all: try exact I.
     Time 1: egg_simpl_goal 6.
-    exact I.
-  Time Qed. 0.024 secs *)
+    exact I. *)
+  Time Qed.  (* 0.024 secs *)
 
 (*
 

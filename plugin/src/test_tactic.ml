@@ -686,7 +686,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         raise Unsupported in
     if String.starts_with ~prefix:"?" name then
       (
-        if not show_types then 
+      let sigma, tp = Typing.type_of env sigma e in
+      if not show_types || Termops.is_Set sigma tp || Termops.is_Type sigma tp then 
         Sexp.Atom name
       else
         let sigma, tp = Typing.type_of env sigma e in
@@ -695,8 +696,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
-      if show_types && arity = 0 then 
-        let sigma, tp = Typing.type_of env sigma e in
+      let sigma, tp = Typing.type_of env sigma e in
+      if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
         Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; 
                                       process_expr false true env sigma fn_metadatas tp] 
        else
@@ -718,7 +719,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
         | Constr.App (f, args) ->
-            if is_type then 
+            if is_type || Termops.is_Set sigma tp || Termops.is_Type sigma tp  then 
             Sexp.List (process_atom false f (Array.length args) ::
                         List.map (process_expr handle_evar is_type env sigma fn_metadatas)
                           (Array.to_list args))
@@ -931,11 +932,11 @@ let egg_simpl_goal ffn_limit =
     let hyps = Environ.named_context (Goal.env gl) in
 
     let qa = empty_query_accumulator () in
-    Queue.push { rulename = "rm_annot";
+    (* Queue.push { rulename = "rm_annot";
                 quantifiers = ["a"; "t"];
                 sideconditions = [];
                 conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
-                triggers = [] } qa.rules;
+                triggers = [] } qa.rules; *)
     (* Queue.push { rulename = "eq_annot";
                 quantifiers = ["a"; "t"];
                 sideconditions = [ AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"] , Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"])];
@@ -1000,7 +1001,11 @@ let egg_search_evars ffn_limit =
     let hyps = Environ.named_context (Goal.env gl) in
 
     let qa = empty_query_accumulator () in
-
+    (* Queue.push { rulename = "rm_annot";
+                quantifiers = ["a"; "t"];
+                sideconditions = [];
+                conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
+                triggers = [] } qa.rules; *)
     (* We hope that there is nohypothesis with evars, otherwise we are in trouble *)
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 

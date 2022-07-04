@@ -931,11 +931,11 @@ let egg_simpl_goal ffn_limit =
     let hyps = Environ.named_context (Goal.env gl) in
 
     let qa = empty_query_accumulator () in
-    (* Queue.push { rulename = "rm_annot";
+    Queue.push { rulename = "rm_annot";
                 quantifiers = ["a"; "t"];
                 sideconditions = [];
                 conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
-                triggers = [] } qa.rules; *)
+                triggers = [] } qa.rules;
     (* Queue.push { rulename = "eq_annot";
                 quantifiers = ["a"; "t"];
                 sideconditions = [ AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"] , Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"])];

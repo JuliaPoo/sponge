@@ -165,18 +165,17 @@ equality as well, just in more steps
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
-    Time egg_simpl_goal 6.
+    Time egg_simpl_goal 3.
     all: try assumption.
     { 
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
+      cbv beta.
+      egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: 
+      egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
     }
-    {
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
-      egg_simpl_goal 6;  try assumption; eauto; try exact I.
-    }
+   
     try exact I.
       (* egg_simpl_goal 6;  try assumption; intuition eauto.
       assert (forall {t: Type} (x y : t), (x<>y) -> (y <> x)).

@@ -15,6 +15,7 @@ type assertion =
   | PSteps of string list
   | PContradiction of string * string list
 
+exception Unsupported
 let true_typed = 
   Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"]
 
@@ -83,7 +84,7 @@ let proof_file_to_proof filepath =
   ignore(input_line chan);
   (try
     let line = ref (input_line chan) in
-    while not (String.starts_with ~prefix:"idtac" !line); do
+    while not (String.starts_with ~prefix:"idtac" !line) do
       let prefix = "eapply " in
       let suffix = ";" in
       let middle = strip_pre_suff !line prefix suffix in
@@ -98,17 +99,45 @@ let proof_file_to_proof filepath =
 
 
 let evar_instantiate_from_file filepath =
+  Printf.printf "Read file \n" ;
+  (* Produce a list of instantiation datastructure *)
   let res = ref [] in
+  let current_subst = ref [] in
+  let current_var = ref 0 in
   let chan = open_in filepath in
   (try
     let line = ref (input_line chan) in
     while true do
-      res := !line :: !res;
-      line := input_line chan
+      flush stdout;
+      Printf.printf "Read one line \n" ;
+      let current_line = !line in 
+      if current_line = "(* Substitution suggested *)" then 
+        ((if !current_subst != [] then 
+          res := !current_subst :: !res else ());
+        current_subst := []; 
+        line := input_line chan)
+      else 
+        begin
+          let suffix = "" in
+          (if String.starts_with ~prefix:"var" current_line then 
+            let prefix = "var ?X" in
+            let middle = strip_pre_suff current_line prefix suffix in
+            Printf.printf "Parsed var %s\n" middle;
+            current_var := int_of_string middle
+          else (if String.starts_with ~prefix:"val" current_line then 
+            let prefix = "val " in
+            let middle = strip_pre_suff current_line prefix suffix in
+            current_subst := (!current_var, middle):: !current_subst;
+            Printf.printf "Parsed val %s\n" middle;
+          else raise Unsupported));
+          line := input_line chan
+        end
     done
   with End_of_file -> ());
+  (if !current_subst != [] then 
+          res := !current_subst :: !res else ());
   close_in chan;
-  String.concat "" !res
+  !res
 
 
 let assertion_to_smtlib a =
@@ -164,7 +193,7 @@ module type BACKEND =
     val declare_initial_expr: t -> Sexp.t -> unit
     (* val declare_evar_constraint : t -> Sexp.t -> unit *)
     val minimize: t -> Sexp.t -> int -> proof
-    val search_evars : t -> Sexp.t -> int -> string 
+    val search_evars : t -> Sexp.t -> int -> ((int * string) list) list 
     val prove: t -> assertion -> string list option
     val reset: t -> unit
     val close: t -> unit
@@ -276,11 +305,12 @@ module FileBasedEggBackend : BACKEND = struct
                                  e; Sexp.Atom (string_of_int ffn_limit)]);
     Printf.fprintf t.oc "\n";
     close_out t.oc;
-    Printf.printf "Wrote %s\n" t.query_file_path;
+    Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path;
     flush stdout;
     let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
     let status = Sys.command command in
-    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    Printf.printf "Command for evar '%s' returned exit status %d\n" command status;
+    flush stdout;
     evar_instantiate_from_file  t.response_file_path
 
 
@@ -620,7 +650,6 @@ let z_to_int sigma e =
     end
   | _ -> raise NotACoqNumber
 
-exception Unsupported
 
 
 let register_metadata metadata f n =
@@ -653,8 +682,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
   let evar_to_str i =
-    let r = Evar.print i in
-    Pp.string_of_ppcmds r in
+    let r = Evar.repr i in
+    "?X" ^string_of_int r in
   (* Note: arity is determined by usage, not by type, because some function (eg sep)
      might always be used partially applied (we require the same arity at all usages) *)
   let process_atom show_types e arity =
@@ -994,6 +1023,11 @@ let egg_simpl_goal ffn_limit =
                Tacticals.tclTHENFIRST
                  (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
     end
+
+(* Borrowed from ltac/evar_tactics.ml because it was not public *)
+(* let define_evar evk sigma constr =
+  Evd.define evk constr sigma *)
+
 let egg_search_evars ffn_limit =
   Goal.enter begin fun gl ->
     let sigma = Tacmach.project gl in
@@ -1020,9 +1054,25 @@ let egg_search_evars ffn_limit =
     let b = B.create () in
     apply_query_accumulator qa (module B) b;
     let pf = B.search_evars b g ffn_limit in
-    Feedback.msg_notice
-      Pp.(str"Suggested instantiation: " ++ str pf);
-    Proofview.tclUNIT ()
+    (if pf = [] then failwith "No evar found or instantiated" 
+    else ());
+    let evar_proposition_to_str = List.map (fun (key, c_string) -> string_of_int key ^ " := " ^ c_string ) in 
+    let spf = String.concat "Alternative:\n" (List.map (String.concat "\n") (List.map evar_proposition_to_str pf)) in 
+      (* there is more than one, so just return them to the user *)
+     Feedback.msg_notice
+      Pp.(str"Possibilities: \n" ++ str spf);
+    (* Pf is a list of lists *)
+    match pf with 
+    | [subst] -> 
+        let constrify = List.map (fun (evk, c_string) -> (evk, parse_constr_expr c_string)) subst in 
+        let newsigma = List.fold_left (fun sigma (evk,c_string) -> 
+            let (sigma, ecstr) = Constrintern.interp_constr_evars env sigma c_string  in
+            Evd.define (Evar.unsafe_of_int evk) ecstr sigma) sigma constrify in 
+        Proofview.Unsafe.tclEVARS newsigma 
+      (* There is a single possible instantiation of the evar present, we are good to do it *)
+    | _ -> 
+     Proofview.tclUNIT ()
+   
   end
 
     

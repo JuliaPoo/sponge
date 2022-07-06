@@ -124,7 +124,9 @@ equality as well, just in more steps
     clear Z_forget_mod_in_lt_l.
     pose proof Z.le_lt_trans as Z_le_lt_trans.
     pose proof Z.mod_le as Z_mod_le.
-    egg_simpl_goal 6.
+    egg_simpl_goal 6. (* before, 5 was sufficient here, but now some loopy rules
+                         that very quickly generated relevant terms don't apply any
+                         more, and we have to take a longer path *)
     1: exact C1.
     (* egg_simpl_goal 6. *)
     4: exact I.
@@ -161,7 +163,6 @@ equality as well, just in more steps
     let c := open_constr:(@id _ _) in inspect c.
   Abort.
 
-
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
@@ -176,7 +177,6 @@ equality as well, just in more steps
       all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
     }
    
-    try exact I.
       (* egg_simpl_goal 6;  try assumption; intuition eauto.
       assert (forall {t: Type} (x y : t), (x<>y) -> (y <> x)).
         {intros.

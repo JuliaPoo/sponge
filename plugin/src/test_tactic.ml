@@ -712,6 +712,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         (*  *)
         let unk = Pp.string_of_ppcmds (Printer.pr_econstr_env env  sigma e) in 
         Printf.printf "Unsupported Atom %s\n" unk;
+        flush stdout;
         raise Unsupported in
     if String.starts_with ~prefix:"?" name then
       (
@@ -721,14 +722,14 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       else
         let sigma, tp = Typing.type_of env sigma e in
         Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
-                  process_expr false true env sigma fn_metadatas tp])
+                  process_expr handle_evar true env sigma fn_metadatas tp])
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       let sigma, tp = Typing.type_of env sigma e in
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
         Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; 
-                                      process_expr false true env sigma fn_metadatas tp] 
+                                      process_expr handle_evar true env sigma fn_metadatas tp] 
        else
             Sexp.Atom n) 
                                     in
@@ -743,7 +744,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       Sexp.Atom z
       else
          Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
-                    process_expr false true env sigma fn_metadatas tp]))
+                    process_expr handle_evar true env sigma fn_metadatas tp]))
   with NotACoqNumber ->
         let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
@@ -757,7 +758,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                         List.map (process_expr handle_evar is_type env sigma fn_metadatas )
                           (Array.to_list args)); 
                           (* No evar in types? *)
-                        process_expr false true env sigma fn_metadatas tp])
+                        process_expr handle_evar true env sigma fn_metadatas tp])
         | _ -> 
             if is_type then 
                 process_atom false e 0
@@ -810,24 +811,9 @@ let destruct_trigger sigma t =
       | _ -> None)
   | _ -> None
 
+let register_expr qa e = Hashtbl.replace qa.initial_exprs e () 
 
-(* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
-let eggify_hyp env sigma (qa: query_accumulator) hyp =
-  let register_expr e = Hashtbl.replace qa.initial_exprs e () in
-
-  let to_assertion env t =
-    let e1, e2, res = match destruct_eq sigma t with
-      | Some (_, lhs, rhs) ->
-         let lhs' = process_expr false false env sigma qa.declarations lhs in
-         let rhs' = process_expr false false env sigma qa.declarations rhs in
-         (lhs', rhs', AEq (lhs', rhs'))
-      | None ->
-         let lhs' = true_typed in
-         let rhs' = process_expr false false env sigma qa.declarations t in
-         (lhs', rhs', AProp rhs') in
-  (* Register all the quantifier frees subexprs of e1 and e2 *)
-
-    let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option =
+let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option =
       (* None means that the current entire e is closed *)
       (* Some l means that the term is not closed, but has the closed subterms contained in the list *)
       match e with
@@ -845,14 +831,28 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                       | None -> acc
                       | Some(subterms) -> acc @ subterms)
                     []
-                    (List.combine l r)) in
-    let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
+                    (List.combine l r))
+let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
       match biggest_closed_subexprs' e with
       | Some(l) -> l
-      | None -> [e] in
+      | None -> [e] 
+(* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
+let eggify_hyp env sigma (qa: query_accumulator) hyp =
+
+  let to_assertion env t =
+    let e1, e2, res = match destruct_eq sigma t with
+      | Some (_, lhs, rhs) ->
+         let lhs' = process_expr false false env sigma qa.declarations lhs in
+         let rhs' = process_expr false false env sigma qa.declarations rhs in
+         (lhs', rhs', AEq (lhs', rhs'))
+      | None ->
+         let lhs' = true_typed in
+         let rhs' = process_expr false false env sigma qa.declarations t in
+         (lhs', rhs', AProp rhs') in
+  (* Register all the quantifier frees subexprs of e1 and e2 *)
     (*List.iter (fun s -> Printf.printf "Closedsubexpr %s\n" (Sexp.to_string_hum s)) (biggest_closed_subexprs e1);*)
-    List.iter register_expr (biggest_closed_subexprs e1);
-    List.iter register_expr (biggest_closed_subexprs e2);
+    List.iter (register_expr qa) (biggest_closed_subexprs e1);
+    List.iter (register_expr qa) (biggest_closed_subexprs e2);
     res in
 
   let rec process_impls name env sideconditions manual_triggers t =
@@ -926,8 +926,8 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
         register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
         let rhs = process_expr false false env sigma qa.declarations (EConstr.of_constr t) in
-        register_expr lhs;
-        register_expr rhs;
+        register_expr qa lhs;
+        register_expr qa rhs;
         Queue.push { rulename = rawname ^ "$def";
                      quantifiers = [];
                      sideconditions = [];
@@ -1025,8 +1025,22 @@ let egg_simpl_goal ffn_limit =
     end
 
 (* Borrowed from ltac/evar_tactics.ml because it was not public *)
-(* let define_evar evk sigma constr =
-  Evd.define evk constr sigma *)
+
+let goal_subexpr env sigma qa t =
+    let e1, e2= match destruct_eq sigma t with
+      | Some (_, lhs, rhs) ->
+         let lhs' = process_expr true false env sigma qa.declarations lhs in
+         let rhs' = process_expr true false env sigma qa.declarations rhs in
+         (lhs', rhs')
+      | None ->
+         let lhs' = true_typed in
+         let rhs' = process_expr true false env sigma qa.declarations t in
+         (lhs', rhs') in
+  (* Register all the quantifier frees subexprs of e1 and e2 *)
+
+    List.iter (register_expr qa) (biggest_closed_subexprs e1);
+    List.iter (register_expr qa) (biggest_closed_subexprs e2)
+
 
 let egg_search_evars ffn_limit =
   Goal.enter begin fun gl ->
@@ -1041,9 +1055,17 @@ let egg_search_evars ffn_limit =
                 conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
                 triggers = [] } qa.rules; *)
     (* We hope that there is nohypothesis with evars, otherwise we are in trouble *)
-    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
 
+    print_endline("Start hyps for evar query");
+    flush stdout;
+    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
+    print_endline("Start goal for evar");
+    flush stdout;
     let g = process_expr true false env sigma qa.declarations (Goal.concl gl) in
+    goal_subexpr env sigma qa (Goal.concl gl);
+    print_endline("goal processed, added to init expr");
+    flush stdout;
+
 
     (* For now we don't have hypothesis that contains evars, to avoid compiler complaining about unused evar_constraints,
        we put something dummy there. This will be removed replaced by code that handle hypothesis with evars. *)
@@ -1052,7 +1074,12 @@ let egg_search_evars ffn_limit =
     let (module B) = get_backend () in
 
     let b = B.create () in
+
     apply_query_accumulator qa (module B) b;
+
+    print_endline("Search evar");
+    flush stdout;
+    List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
     let pf = B.search_evars b g ffn_limit in
     (if pf = [] then failwith "No evar found or instantiated" 
     else ());

@@ -29,8 +29,15 @@ END
 
 TACTIC EXTEND egg_simpl_goal
 | [ "egg_simpl_goal" nat_or_var(ffn_limit) ] ->
-  { Test_tactic.egg_simpl_goal ffn_limit }
+  { Test_tactic.egg_simpl_goal ffn_limit None}
 END
+
+TACTIC EXTEND egg_elim
+| [ "egg_elim" nat_or_var(ffn_limit) reference(id_to_simpl) ] ->
+  { Test_tactic.egg_simpl_goal ffn_limit (Some id_to_simpl)}
+END
+
+
 
 TACTIC EXTEND egg_cvc5
 | [ "egg_cvc5" ] ->

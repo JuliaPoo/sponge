@@ -149,7 +149,8 @@ let assertion_to_smtlib a =
 (* (! body tag value) *)
 let smtlib_annot body tag value =
   Sexp.List [Sexp.Atom "!"; body; Sexp.Atom tag; value]
-
+let smtlib_highcost r = 
+  Sexp.List [Sexp.Atom "avoid"; Sexp.Atom r]
 (* (assert (! body :named name)) *)
 let smtlib_assert_named name body =
   Sexp.List [Sexp.Atom "assert"; smtlib_annot body ":named" (Sexp.Atom name)]
@@ -190,6 +191,7 @@ module type BACKEND =
     val create: unit -> t
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
+    val declare_highcost: t -> string -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
     (* val declare_evar_constraint : t -> Sexp.t -> unit *)
     val minimize: t -> Sexp.t -> int -> proof
@@ -204,6 +206,8 @@ module FileBasedSmtBackend : BACKEND = struct
     { oc: out_channel;
       smt_file_path: string }
 
+  let declare_highcost t r =
+    assert false
   let new_output_file smt_file_path =
     let oc = open_out smt_file_path in
     Printf.fprintf oc "(set-logic UF)\n";
@@ -277,7 +281,10 @@ module FileBasedEggBackend : BACKEND = struct
     { oc; query_file_path; response_file_path }
 
   let declare_fun t fname fn_m = () (* no need to declare functions *)
-
+  let declare_highcost t r =
+    Sexp.output t.oc (smtlib_highcost r);
+    Printf.fprintf t.oc "\n"
+    
   let declare_rule t r =
     Sexp.output t.oc (smtlib_rule r);
     Printf.fprintf t.oc "\n"
@@ -335,6 +342,9 @@ let apply_query_accumulator qa (type bt) (module B : BACKEND with type t = bt) (
 ( declare_fun+; declare_rule+; declare_initial_expr+; ( minimize | prove ); reset )
 and the close at the end is optional a no-op. *)
 module RecompilationBackend : BACKEND = struct
+
+  let declare_highcost t r =
+    assert false
   let needs_multipattern r =
     (match r.sideconditions with
      | _ :: _ -> true
@@ -668,17 +678,26 @@ let has_implicit_args gref =
 (* we use % instead of @ because leading @ is reserved in smtlib *)
 let implicits_prefix r =
   if has_implicit_args r then "@" else ""
+let ind_to_str env i =
+    let r = Names.GlobRef.IndRef i in
+    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i)
+
+let const_to_str env c =
+  let r = Names.GlobRef.ConstRef c in
+  implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constant env c)
+
+let ctor_to_str env c =
+  let r = Names.GlobRef.ConstructRef c in
+  implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constructor env c)
 
 let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadatas e = 
   let ind_to_str i =
-    let r = Names.GlobRef.IndRef i in
-    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_inductive env i) in
+    ind_to_str env i in
   let const_to_str c =
-    let r = Names.GlobRef.ConstRef c in
-    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constant env c) in
+    const_to_str env c in
   let ctor_to_str c =
-    let r = Names.GlobRef.ConstructRef c in
-    implicits_prefix r ^ Pp.string_of_ppcmds (Printer.pr_constructor env c) in
+    ctor_to_str env c in
+  
   let sort_to_str s = Pp.string_of_ppcmds
                         (Printer.pr_sort sigma (EConstr.ESorts.kind sigma s)) in
   let evar_to_str i =
@@ -954,32 +973,39 @@ let egg_cvc5 () =
     tclUNIT ()
     end
 
-let egg_simpl_goal ffn_limit =
+let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
   Goal.enter begin fun gl ->
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
     let hyps = Environ.named_context (Goal.env gl) in
 
     let qa = empty_query_accumulator () in
-    (* Queue.push { rulename = "rm_annot";
-                quantifiers = ["a"; "t"];
-                sideconditions = [];
-                conclusion = AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"], Sexp.Atom "?a");
-                triggers = [] } qa.rules; *)
-    (* Queue.push { rulename = "eq_annot";
-                quantifiers = ["a"; "t"];
-                sideconditions = [ AEq (Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"] , Sexp.List [Sexp.Atom "annot"; Sexp.Atom "?a"; Sexp.Atom "?t"])];
-                conclusion = AEq (true_typed, Sexp.List [Sexp.Atom "annot"; 
-                                                          Sexp.List [Sexp.Atom "&@eq"; Sexp.Atom "?a"; Sexp.Atom "?t"; Sexp.Atom "?t"];
-                                                        Sexp.Atom "&Prop"]);
-                triggers = [] } qa.rules; *)
+    
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
-
+    print_endline("Went through hypothesis");
+    flush stdout;
     let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in
-
+    print_endline("Processed goal");
+    flush stdout;
     let (module B) = get_backend () in
-
+    
     let b = B.create () in
+    begin 
+      let open Names.GlobRef in
+      match id_simpl with 
+      | Some (VarRef id) ->
+        let s = "&" ^ Pp.string_of_ppcmds (Names.Id.print id) in
+        B.declare_highcost b s
+      | Some (IndRef ind) ->
+        B.declare_highcost b ( "&" ^ ind_to_str env ind)
+      | Some (ConstructRef ctr) ->
+        B.declare_highcost b ( "!" ^ ctor_to_str env ctr )
+      | Some (ConstRef cst) ->
+        B.declare_highcost b ( "&" ^const_to_str env cst )
+      | None -> ()
+    end;
+    print_endline("So far so good");
+    flush stdout;
     apply_query_accumulator qa (module B) b;
     let pf = B.minimize b g ffn_limit in
 

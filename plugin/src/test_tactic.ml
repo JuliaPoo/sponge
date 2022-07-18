@@ -747,8 +747,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       let sigma, tp = Typing.type_of env sigma e in
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
-        Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; 
-                                      process_expr handle_evar true env sigma fn_metadatas tp] 
+        Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp] 
        else
             Sexp.Atom n) 
                                     in
@@ -778,6 +777,23 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                           (Array.to_list args)); 
                           (* No evar in types? *)
                         process_expr handle_evar true env sigma fn_metadatas tp])
+        | Constr.Prod (b, tp, body) ->
+          if EConstr.Vars.noccurn sigma 1 body then
+          (if is_type then 
+            let env = EConstr.push_rel 
+                      (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp))
+                      env in
+            Sexp.List ([Sexp.Atom "arrow"; 
+            process_expr handle_evar true env sigma fn_metadatas tp;
+            process_expr handle_evar true env sigma fn_metadatas body;
+            ])
+          else  
+            raise Unsupported)
+           
+
+         else raise Unsupported (* foralls after impls are not supported *)
+          
+       
         | _ -> 
             if is_type then 
                 process_atom false e 0

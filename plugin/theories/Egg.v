@@ -58,3 +58,4 @@ Proof.
   intros. apply propositional_extensionality. split; auto.
 Qed.
 
+Definition arrow A B := A -> B.

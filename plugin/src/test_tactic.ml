@@ -779,21 +779,14 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                         process_expr handle_evar true env sigma fn_metadatas tp])
         | Constr.Prod (b, tp, body) ->
           if EConstr.Vars.noccurn sigma 1 body then
-          (if is_type then 
+            Sexp.List ([Sexp.Atom "arrow"; 
+            process_expr handle_evar true env sigma fn_metadatas tp;
             let env = EConstr.push_rel 
                       (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp))
                       env in
-            Sexp.List ([Sexp.Atom "arrow"; 
-            process_expr handle_evar true env sigma fn_metadatas tp;
             process_expr handle_evar true env sigma fn_metadatas body;
             ])
-          else  
-            raise Unsupported)
-           
-
-         else raise Unsupported (* foralls after impls are not supported *)
-          
-       
+         else raise Unsupported (* dependent types are not accepted for now *)
         | _ -> 
             if is_type then 
                 process_atom false e 0

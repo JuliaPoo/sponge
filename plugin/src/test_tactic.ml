@@ -41,6 +41,29 @@ type query_accumulator =
     evar_constraints: (Sexp.t, unit) Hashtbl.t;
     initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
+let get_backend_name: unit -> string =
+  Goptions.declare_string_option_and_ref
+    ~depr:false
+    ~key:["Egg"; "Backend"]
+    ~value:"FileBasedEggBackend"
+
+let log_ignored_hyps: unit -> bool =
+  Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Egg";"Log";"Ignored";"Hypotheses"]
+    ~value:false
+
+let log_proofs: unit -> bool =
+  Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Egg";"Log";"Proofs"]
+    ~value:false
+
+let log_misc_tracing: unit -> bool =
+  Goptions.declare_bool_option_and_ref
+    ~depr:false
+    ~key:["Egg";"Misc";"Tracing"]
+    ~value:false
 let empty_query_accumulator () =
   let ds = Hashtbl.create 20 in
   (* always-present constants (even if they don't appear in any expression) *)
@@ -99,7 +122,7 @@ let proof_file_to_proof filepath =
 
 
 let evar_instantiate_from_file filepath =
-  Printf.printf "Read file \n" ;
+  if log_misc_tracing () then Printf.printf "Read file \n" else ();
   (* Produce a list of instantiation datastructure *)
   let res = ref [] in
   let current_subst = ref [] in
@@ -109,7 +132,7 @@ let evar_instantiate_from_file filepath =
     let line = ref (input_line chan) in
     while true do
       flush stdout;
-      Printf.printf "Read one line \n" ;
+      if log_misc_tracing() then Printf.printf "Read one line \n" else ();
       let current_line = !line in 
       if current_line = "(* Substitution suggested *)" then 
         ((if !current_subst != [] then 
@@ -122,13 +145,13 @@ let evar_instantiate_from_file filepath =
           (if String.starts_with ~prefix:"var" current_line then 
             let prefix = "var ?X" in
             let middle = strip_pre_suff current_line prefix suffix in
-            Printf.printf "Parsed var %s\n" middle;
+            if log_misc_tracing () then Printf.printf "Parsed var %s\n" middle else ();
             current_var := int_of_string middle
           else (if String.starts_with ~prefix:"val" current_line then 
             let prefix = "val " in
             let middle = strip_pre_suff current_line prefix suffix in
             current_subst := (!current_var, middle):: !current_subst;
-            Printf.printf "Parsed val %s\n" middle;
+            if log_misc_tracing() then Printf.printf "Parsed val %s\n" middle else ();
           else raise Unsupported));
           line := input_line chan
         end
@@ -252,11 +275,11 @@ module FileBasedSmtBackend : BACKEND = struct
     Printf.fprintf t.oc "(check-sat)\n";
     (*Printf.fprintf t.oc "(get-proof)\n"; (* quite verbose *) *)
     close_out t.oc;
-    Printf.printf "Wrote %s\n" t.smt_file_path;
+    if log_misc_tracing() then Printf.printf "Wrote %s\n" t.smt_file_path else ();
     flush stdout;
     let command = "time cvc5 --tlimit=1000 " ^ t.smt_file_path in
     let status = Sys.command command in
-    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    if log_misc_tracing() then  Printf.printf "Command '%s' returned exit status %d\n" command status else ();
     None
 
   let reset t =
@@ -300,11 +323,12 @@ module FileBasedEggBackend : BACKEND = struct
                                  e; Sexp.Atom (string_of_int ffn_limit)]);
     Printf.fprintf t.oc "\n";
     close_out t.oc;
-    Printf.printf "Wrote %s\n" t.query_file_path;
+    if log_misc_tracing() then Printf.printf "Wrote %s\n" t.query_file_path else ();
     flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
+    (* let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in *)
+    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier" in
     let status = Sys.command command in
-    Printf.printf "Command '%s' returned exit status %d\n" command status;
+    if log_misc_tracing() then Printf.printf "Command '%s' returned exit status %d\n" command status else ();
     proof_file_to_proof t.response_file_path
 
   let search_evars t e ffn_limit =
@@ -312,11 +336,11 @@ module FileBasedEggBackend : BACKEND = struct
                                  e; Sexp.Atom (string_of_int ffn_limit)]);
     Printf.fprintf t.oc "\n";
     close_out t.oc;
-    Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path;
+    if log_misc_tracing() then Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path else ();
     flush stdout;
     let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
-    let status = Sys.command command in
-    Printf.printf "Command for evar '%s' returned exit status %d\n" command status;
+    let _status = Sys.command command in
+    if log_misc_tracing() then Printf.printf "Command for evar '%s' returned exit status %d\n" command _status else ();
     flush stdout;
     evar_instantiate_from_file  t.response_file_path
 
@@ -536,11 +560,11 @@ end
     let oc = open_out rust_rules_path in
     Buffer.output_buffer oc t.buf;
     close_out oc;
-    Printf.printf "Wrote Rust code to %s\n" rust_rules_path;
+    if log_misc_tracing() then Printf.printf "Wrote Rust code to %s\n" rust_rules_path else ();
     flush stdout;
     let cargo_command = "cd \"" ^ egg_repo_path ^ "\" && time cargo run --release --bin coq" in
     let status = Sys.command cargo_command in
-    Printf.printf "Command '%s' returned exit status %d\n" cargo_command status;
+    if log_misc_tracing() then Printf.printf "Command '%s' returned exit status %d\n" cargo_command status else ();
     if status != 0 then failwith "invoking rust failed"
     else t.state <- SDone;
     let pf = proof_file_to_proof recompilation_proof_file_path in
@@ -560,23 +584,6 @@ end
 
 end
 
-let get_backend_name: unit -> string =
-  Goptions.declare_string_option_and_ref
-    ~depr:false
-    ~key:["Egg"; "Backend"]
-    ~value:"FileBasedEggBackend"
-
-let log_ignored_hyps: unit -> bool =
-  Goptions.declare_bool_option_and_ref
-    ~depr:false
-    ~key:["Egg";"Log";"Ignored";"Hypotheses"]
-    ~value:false
-
-let log_proofs: unit -> bool =
-  Goptions.declare_bool_option_and_ref
-    ~depr:false
-    ~key:["Egg";"Log";"Proofs"]
-    ~value:false
 
 let get_backend () : (module BACKEND) =
   let name = get_backend_name () in
@@ -730,7 +737,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       | _ -> 
         (*  *)
         let unk = Pp.string_of_ppcmds (Printer.pr_econstr_env env  sigma e) in 
-        Printf.printf "Unsupported Atom %s\n" unk;
+        if log_misc_tracing() then Printf.printf "Unsupported Atom %s\n" unk else ();
         flush stdout;
         raise Unsupported in
     if String.starts_with ~prefix:"?" name then
@@ -891,8 +898,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     | None ->
       match EConstr.kind sigma t with
       | Constr.Prod (b, tp, body) ->
-
-          Printf.printf "Pass below impl" ;
+         if log_misc_tracing() then Printf.printf "Pass below impl" else ();
          if EConstr.Vars.noccurn sigma 1 body then
            let side = to_assertion env tp in
            let env = EConstr.push_rel 
@@ -911,7 +917,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                                         | Names.Name(t) -> (binder_name_to_string n)::acc)
                                      | Context.Rel.Declaration.LocalDef(_,_,_) -> acc)
               env ~init:([]) in
-        Printf.printf "Add rule" ;
+        if log_misc_tracing() then Printf.printf "Add rule" else ();
         Queue.push {
                  rulename = name;
                  quantifiers = List.rev quant_names;
@@ -924,10 +930,10 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         (Printf.printf "Pass below false forall" ;
+         ( if log_misc_tracing() then Printf.printf "Pass below false forall" else ();
          process_impls name env [] [] t)
        else
-         (Printf.printf "Pass below forall";
+         (if log_misc_tracing() then Printf.printf "Pass below forall" else ();
          let env = EConstr.push_rel (Context.Rel.Declaration.LocalAssum (b, tp)) env in
          process_foralls name env body)
     | _ -> process_impls name env [] [] t in
@@ -945,7 +951,8 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
           process_foralls name env (EConstr.of_constr t)
         else raise Unsupported
       with
-        Unsupported -> if log_ignored_hyps () then Printf.printf "Dropped %s\n" name
+        Unsupported -> if log_ignored_hyps () then 
+          Printf.printf "Dropped %s\n" name
     end
   | LocalDef (id, t, _tp) -> begin
       let rawname = Names.Id.to_string id.binder_name in
@@ -963,7 +970,8 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                      triggers = [] } qa.rules
 
       with
-        Unsupported -> if log_ignored_hyps () then Printf.printf "Dropped %s\n" rawname
+        Unsupported -> if log_ignored_hyps () then 
+          Printf.printf "Dropped %s\n" rawname
     end
 
 
@@ -991,10 +999,10 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
     let qa = empty_query_accumulator () in
     
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
-    print_endline("Went through hypothesis");
+    if log_misc_tracing() then print_endline("Went through hypothesis") else ();
     flush stdout;
     let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in
-    print_endline("Processed goal");
+    if log_misc_tracing() then print_endline("Processed goal") else ();
     flush stdout;
     let (module B) = get_backend () in
     
@@ -1013,7 +1021,7 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
         B.declare_highcost b ( "&" ^const_to_str env cst )
       | None -> ()
     end;
-    print_endline("So far so good");
+    if log_misc_tracing() then print_endline("So far so good") else ();
     flush stdout;
     apply_query_accumulator qa (module B) b;
     let pf = B.minimize b g ffn_limit in
@@ -1091,14 +1099,14 @@ let egg_search_evars ffn_limit =
                 triggers = [] } qa.rules; *)
     (* We hope that there is nohypothesis with evars, otherwise we are in trouble *)
 
-    print_endline("Start hyps for evar query");
+    if log_misc_tracing() then print_endline("Start hyps for evar query") else ();
     flush stdout;
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
-    print_endline("Start goal for evar");
+    if log_misc_tracing() then print_endline("Start goal for evar") else ();
     flush stdout;
     let g = process_expr true false env sigma qa.declarations (Goal.concl gl) in
     goal_subexpr env sigma qa (Goal.concl gl);
-    print_endline("goal processed, added to init expr");
+    if log_misc_tracing() then print_endline("goal processed, added to init expr") else ();
     flush stdout;
 
 
@@ -1112,7 +1120,7 @@ let egg_search_evars ffn_limit =
 
     apply_query_accumulator qa (module B) b;
 
-    print_endline("Search evar");
+    if log_misc_tracing() then print_endline("Search evar") else ();
     flush stdout;
     List.iter (fun hyp -> eggify_hyp env sigma qa hyp) (List.rev hyps);
     let pf = B.search_evars b g ffn_limit in

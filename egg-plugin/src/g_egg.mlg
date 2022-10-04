@@ -1,4 +1,4 @@
-DECLARE PLUGIN "egg_plugin"
+DECLARE PLUGIN "egg-plugin.coquetier"
 
 {
 

@@ -1,0 +1,10 @@
+
+package "coquetier" (
+  directory = "."
+  requires = "coq-core.plugins.ltac, sexplib"
+  archive(byte) = "coquetier.cma"
+  archive(native) = "coquetier.cmxa"
+  plugin(byte) = "coquetier.cma"
+  plugin(native) = "coquetier.cmxs"
+)
+directory = "."

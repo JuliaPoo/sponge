@@ -1127,13 +1127,13 @@ let egg_search_evars ffn_limit =
     (if pf = [] then failwith "No evar found or instantiated" 
     else ());
     let evar_proposition_to_str = List.map (fun (key, c_string) -> string_of_int key ^ " := " ^ c_string ) in 
-    let spf = String.concat "Alternative:\n" (List.map (String.concat "\n") (List.map evar_proposition_to_str pf)) in 
+    let spf = String.concat "\nAlternative:\n" (List.map (String.concat "\n") (List.map evar_proposition_to_str pf)) in 
       (* there is more than one, so just return them to the user *)
      Feedback.msg_notice
-      Pp.(str"Possibilities: \n" ++ str spf);
+      Pp.(str"Possibilities (First one hardselected): \n" ++ str spf);
     (* Pf is a list of lists *)
     match pf with 
-    | [subst] -> 
+    | subst::_q -> 
         let constrify = List.map (fun (evk, c_string) -> (evk, parse_constr_expr c_string)) subst in 
         let newsigma = List.fold_left (fun sigma (evk,c_string) -> 
             let (sigma, ecstr) = Constrintern.interp_constr_evars env sigma c_string  in

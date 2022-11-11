@@ -4,8 +4,8 @@ open Proofview
 let egg_repo_path = "/opt/link_to_egg" (* adapt as needed *)
 let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs"
 let recompilation_proof_file_path = "/tmp/egg_proof.txt"
-let coquetier_input_path = egg_repo_path ^ "/coquetier_input.smt2"
-let coquetier_proof_file_path = egg_repo_path ^ "/coquetier_proof_output.txt"
+let _coquetier_input_path = egg_repo_path ^ "/coquetier_input.smt2"
+let _coquetier_proof_file_path = egg_repo_path ^ "/coquetier_proof_output.txt"
 
 type assertion =
   | AEq of Sexp.t * Sexp.t
@@ -298,9 +298,13 @@ module FileBasedEggBackend : BACKEND = struct
       response_file_path: string }
 
   let create () =
-    let query_file_path = coquetier_input_path in
+    (* Generate a new file name *)
+    let open Filename in 
+    let query_file_path = temp_file ~temp_dir:egg_repo_path "coquetier_" ".in" in
+    (* let query_file_path = coquetier_input_path in *)
     let oc = open_out query_file_path in
-    let response_file_path = coquetier_proof_file_path in
+    (* let response_file_path = coquetier_proof_file_path in *)
+    let response_file_path = temp_file ~temp_dir:egg_repo_path "coquetier_" ".out" in
     { oc; query_file_path; response_file_path }
 
   let declare_fun t fname fn_m = () (* no need to declare functions *)
@@ -326,10 +330,21 @@ module FileBasedEggBackend : BACKEND = struct
     if log_misc_tracing() then Printf.printf "Wrote %s\n" t.query_file_path else ();
     flush stdout;
     (* let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in *)
-    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier" in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    Printf.printf "%s\n" command;
+    flush stdout;
     let status = Sys.command command in
     if log_misc_tracing() then Printf.printf "Command '%s' returned exit status %d\n" command status else ();
-    proof_file_to_proof t.response_file_path
+    if not (log_misc_tracing()) then 
+      let open Sys in 
+      remove t.query_file_path
+    else ();
+    let res = proof_file_to_proof t.response_file_path in
+    if not (log_misc_tracing()) then 
+      let open Sys in 
+      remove t.response_file_path
+    else ();
+    res
 
   let search_evars t e ffn_limit =
     Sexp.output t.oc (Sexp.List [Sexp.Atom "search";
@@ -338,11 +353,22 @@ module FileBasedEggBackend : BACKEND = struct
     close_out t.oc;
     if log_misc_tracing() then Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path else ();
     flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    Printf.printf "%s\n" command;
+    flush stdout;
     let _status = Sys.command command in
     if log_misc_tracing() then Printf.printf "Command for evar '%s' returned exit status %d\n" command _status else ();
     flush stdout;
-    evar_instantiate_from_file  t.response_file_path
+    if not (log_misc_tracing()) then 
+      let open Sys in 
+      remove t.query_file_path
+    else ();
+    let res = evar_instantiate_from_file  t.response_file_path in
+    if not (log_misc_tracing()) then 
+      let open Sys in 
+      remove t.response_file_path
+    else ();
+    res
 
 
   let prove t a =
@@ -352,7 +378,15 @@ module FileBasedEggBackend : BACKEND = struct
     failwith "not supported"
 
   let close t =
-    try close_out t.oc with _ -> ()
+    (* TODO: This seem to never be called? Ask about the intention *)
+    try 
+      close_out t.oc;
+      if not (log_misc_tracing()) then 
+        let open Sys in 
+        remove t.query_file_path;
+        remove t.response_file_path
+      else ();
+    with _ -> ()
 
 end
 
@@ -1006,6 +1040,7 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
     flush stdout;
     let (module B) = get_backend () in
     
+    (* File created here *)
     let b = B.create () in
     begin 
       let open Names.GlobRef in

@@ -330,9 +330,9 @@ module FileBasedEggBackend : BACKEND = struct
     if log_misc_tracing() then Printf.printf "Wrote %s\n" t.query_file_path else ();
     flush stdout;
     (* let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in *)
-    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
-    Printf.printf "%s\n" command;
-    flush stdout;
+    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    (* Printf.printf "%s\n" command; *)
+    (* flush stdout; *)
     let status = Sys.command command in
     if log_misc_tracing() then Printf.printf "Command '%s' returned exit status %d\n" command status else ();
     if not (log_misc_tracing()) then 
@@ -353,9 +353,9 @@ module FileBasedEggBackend : BACKEND = struct
     close_out t.oc;
     if log_misc_tracing() then Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path else ();
     flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
-    Printf.printf "%s\n" command;
-    flush stdout;
+    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    (* Printf.printf "%s\n" command; *)
+    (* flush stdout; *)
     let _status = Sys.command command in
     if log_misc_tracing() then Printf.printf "Command for evar '%s' returned exit status %d\n" command _status else ();
     flush stdout;

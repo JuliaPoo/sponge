@@ -46,10 +46,19 @@ Module Z.
 End Z.
 
 Lemma neq_sym{A: Type}: forall (x y: A), x <> y -> y <> x. congruence. Qed.
-
 Ltac consts :=
   cbv; intuition discriminate.
 
+  Theorem myCoolTheorem : False -> forall (x y : N), x = y.
+    intros; eauto.
+    exfalso.
+    eauto.
+    Qed.
+
+  Lemma coollemma : forall (x y : N), x = y.
+
+    let c := open_constr:(@id _ _) in inspect c.
+  Abort.
 Section WithLib.
   Context (word: Type)
           (ZToWord: Z -> word)
@@ -129,7 +138,7 @@ equality as well, just in more steps
                          more, and we have to take a longer path *)
     1: exact C1.
     (* egg_simpl_goal 6. *)
-    4: exact I.
+    (* 4: exact I. *)
     (* transitivity leads to uninferrable evars! *)
   Abort.
 
@@ -159,22 +168,29 @@ equality as well, just in more steps
     exact Coq.Init.Logic.I.
   Qed.
 
-  Goal True.
-    let c := open_constr:(@id _ _) in inspect c.
-  Abort.
 
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
+    Set Egg Misc Tracing.
     Time egg_simpl_goal 3.
     all: try assumption.
+    { cbv beta.
+      egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: 
+      egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
+    }
+
     { 
       cbv beta.
       egg_simpl_goal 4;  try assumption; eauto; try exact I.
       all: 
       egg_simpl_goal 4;  try assumption; eauto; try exact I.
       all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
-      all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
+    }
+    {
+     try exact I.
     }
    
       (* egg_simpl_goal 6;  try assumption; intuition eauto.

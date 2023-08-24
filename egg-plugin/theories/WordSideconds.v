@@ -99,6 +99,11 @@ because wsub_def, wadd_comm, wadd_to_right_assoc together can prove this
 equality as well, just in more steps
 *)
 
+  Goal (forall x y z, wadd x (wadd y z) = wadd (wadd x y) z).
+  intros.
+  egg_simpl_to 4 ( wadd (wadd x y) z).
+  Abort.
+
   Ltac pose_const_sideconds :=
     assert (0 <= 8 < 2 ^ 32) as C1 by consts;
     assert (0 <= 3 < 32) as C2 by consts;

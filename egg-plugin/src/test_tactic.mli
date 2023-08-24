@@ -1,4 +1,4 @@
-val egg_simpl_goal : int(* far-fetched-ness limit *) -> Names.GlobRef.t option (* potential identifier to try to remove from the resulting expression *) -> unit Proofview.tactic
+val egg_simpl_goal : int(* far-fetched-ness limit *) -> Names.GlobRef.t option (* potential identifier to try to remove from the resulting expression *) -> EConstr.t list -> unit Proofview.tactic
 val egg_search_evars : int(* far-fetched-ness limit *) -> unit Proofview.tactic
 
 val egg_cvc5 : unit -> unit Proofview.tactic

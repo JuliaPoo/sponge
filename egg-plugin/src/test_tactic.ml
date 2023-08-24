@@ -174,6 +174,9 @@ let smtlib_annot body tag value =
   Sexp.List [Sexp.Atom "!"; body; Sexp.Atom tag; value]
 let smtlib_highcost r = 
   Sexp.List [Sexp.Atom "avoid"; Sexp.Atom r]
+
+let smtlib_requires_term t = 
+  Sexp.List [Sexp.Atom "require"; t]
 (* (assert (! body :named name)) *)
 let smtlib_assert_named name body =
   Sexp.List [Sexp.Atom "assert"; smtlib_annot body ":named" (Sexp.Atom name)]
@@ -215,6 +218,7 @@ module type BACKEND =
     val declare_fun: t -> string -> fn_metadata -> unit
     val declare_rule: t -> rule -> unit
     val declare_highcost: t -> string -> unit
+    val declare_requires_term: t -> Sexp.t -> unit
     val declare_initial_expr: t -> Sexp.t -> unit
     (* val declare_evar_constraint : t -> Sexp.t -> unit *)
     val minimize: t -> Sexp.t -> int -> proof
@@ -230,6 +234,8 @@ module FileBasedSmtBackend : BACKEND = struct
       smt_file_path: string }
 
   let declare_highcost t r =
+    assert false
+  let declare_requires_term t r =
     assert false
   let new_output_file smt_file_path =
     let oc = open_out smt_file_path in
@@ -312,6 +318,10 @@ module FileBasedEggBackend : BACKEND = struct
     Sexp.output t.oc (smtlib_highcost r);
     Printf.fprintf t.oc "\n"
     
+  let declare_requires_term t r = 
+    Sexp.output t.oc (smtlib_requires_term r);
+    Printf.fprintf t.oc "\n"
+
   let declare_rule t r =
     Sexp.output t.oc (smtlib_rule r);
     Printf.fprintf t.oc "\n"
@@ -402,6 +412,8 @@ and the close at the end is optional a no-op. *)
 module RecompilationBackend : BACKEND = struct
 
   let declare_highcost t r =
+    assert false
+  let declare_requires_term t r =
     assert false
   let needs_multipattern r =
     (match r.sideconditions with
@@ -1024,7 +1036,7 @@ let egg_cvc5 () =
     tclUNIT ()
     end
 
-let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
+let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
   Goal.enter begin fun gl ->
     let sigma = Tacmach.project gl in
     let env = Goal.env gl in
@@ -1055,6 +1067,14 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option)=
       | Some (ConstRef cst) ->
         B.declare_highcost b ( "&" ^const_to_str env cst )
       | None -> ()
+    end;
+    begin
+      let rec aux l = match l with 
+            | h::t -> 
+                let sexp = process_expr false false env sigma qa.declarations h in
+                B.declare_requires_term b sexp; aux t
+            | [] -> () in
+      aux terms
     end;
     if log_misc_tracing() then print_endline("So far so good") else ();
     flush stdout;

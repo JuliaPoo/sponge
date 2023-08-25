@@ -10,8 +10,6 @@ theories/WordSideconds.v
 
 src/test_tactic.ml
 src/test_tactic.mli
-src/construction_game.ml
-src/construction_game.mli
 src/g_egg.mlg
 src/coquetier.mlpack
 #-generate-meta-for-package egg-plugin 

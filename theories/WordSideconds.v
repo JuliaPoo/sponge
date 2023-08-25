@@ -177,7 +177,7 @@ equality as well, just in more steps
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
-    Set Egg Misc Tracing.
+    (* Set Egg Misc Tracing. *)
     Time egg_simpl_goal 3.
     all: try assumption.
     { cbv beta.

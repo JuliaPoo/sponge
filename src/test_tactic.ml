@@ -944,7 +944,7 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     | None ->
       match EConstr.kind sigma t with
       | Constr.Prod (b, tp, body) ->
-         if log_misc_tracing() then Printf.printf "Pass below impl" else ();
+         if log_misc_tracing() then Printf.printf "Pass below impl\n" else ();
          if EConstr.Vars.noccurn sigma 1 body then
            let side = to_assertion env tp in
            let env = EConstr.push_rel 
@@ -976,10 +976,10 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     match EConstr.kind sigma t with
     | Constr.Prod (b, tp, body) ->
        if EConstr.Vars.noccurn sigma 1 body then
-         ( if log_misc_tracing() then Printf.printf "Pass below false forall" else ();
+         ( if log_misc_tracing() then Printf.printf "Pass below false forall\n" else ();
          process_impls name env [] [] t)
        else
-         (if log_misc_tracing() then Printf.printf "Pass below forall" else ();
+         (if log_misc_tracing() then Printf.printf "Pass below forall\n" else ();
          let env = EConstr.push_rel (Context.Rel.Declaration.LocalAssum (b, tp)) env in
          process_foralls name env body)
     | _ -> process_impls name env [] [] t in

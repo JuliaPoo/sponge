@@ -1,5 +1,17 @@
--R src/ Sponge
-src/Eggify.v
-src/EGraphList.v
-src/Enodes.v
-src/Congruence.v
+src/META.egg-plugin
+-R theories egg
+-I src
+
+theories/Data.v
+theories/Egg.v
+theories/Loader.v
+theories/test.v
+theories/WordSideconds.v
+
+src/test_tactic.ml
+src/test_tactic.mli
+src/construction_game.ml
+src/construction_game.mli
+src/g_egg.mlg
+src/coquetier.mlpack
+#-generate-meta-for-package egg-plugin 

@@ -1,6 +1,3 @@
-../.Makefile.d
-../Makefile
-../Makefile.conf
 .*.aux
 .coq-native/
 *.glob

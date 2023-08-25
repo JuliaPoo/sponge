@@ -8,8 +8,8 @@ theories/Loader.v
 theories/test.v
 theories/WordSideconds.v
 
-src/test_tactic.ml
-src/test_tactic.mli
+src/egg_tactic.ml
+src/egg_tactic.mli
 src/g_egg.mlg
 src/coquetier.mlpack
 #-generate-meta-for-package egg-plugin 

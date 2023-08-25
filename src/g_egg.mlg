@@ -11,26 +11,26 @@ open Stdarg
 
 TACTIC EXTEND egg_simpl_goal
 | [ "egg_simpl_goal" nat_or_var(ffn_limit) ] ->
-  { Test_tactic.egg_simpl_goal ffn_limit None []}
+  { Egg_tactic.egg_simpl_goal ffn_limit None []}
 END
 
 TACTIC EXTEND egg_simpl_to
 | [ "egg_simpl_to" nat_or_var(ffn_limit) constr_list(t)] ->
-  { Test_tactic.egg_simpl_goal ffn_limit None t}
+  { Egg_tactic.egg_simpl_goal ffn_limit None t}
 END
 
 TACTIC EXTEND egg_elim
 | [ "egg_elim" nat_or_var(ffn_limit) reference(id_to_simpl) ] ->
-  { Test_tactic.egg_simpl_goal ffn_limit (Some id_to_simpl) []}
+  { Egg_tactic.egg_simpl_goal ffn_limit (Some id_to_simpl) []}
 END
 
 TACTIC EXTEND egg_search_evars
 | [ "egg_search_evars" nat_or_var(ffn_limit)] ->
-  { Test_tactic.egg_search_evars ffn_limit }
+  { Egg_tactic.egg_search_evars ffn_limit }
 END
 
 TACTIC EXTEND inspect
 | [ "inspect" open_constr(c) ] ->
-  { Test_tactic.inspect c }
+  { Egg_tactic.inspect c }
 END
 

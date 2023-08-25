@@ -32,9 +32,10 @@ TACTIC EXTEND egg_simpl_goal
   { Test_tactic.egg_simpl_goal ffn_limit None []}
 END
 
+
 TACTIC EXTEND egg_simpl_to
-| [ "egg_simpl_to" nat_or_var(ffn_limit) constr(t)] ->
-  { Test_tactic.egg_simpl_goal ffn_limit None [t]}
+| [ "egg_simpl_to" nat_or_var(ffn_limit) constr_list(t)] ->
+  { Test_tactic.egg_simpl_goal ffn_limit None t}
 END
 
 TACTIC EXTEND egg_elim

@@ -59,6 +59,6 @@ Proof.
 Qed.
 
 Definition arrow A B := A -> B.
-Lemma eggTypeEmbedding : forall (t : Type) (x y : t) (pf : x = y), x = y.
+Lemma eggTypeEmbedding : forall (t : Type) (x y : t) (n m : nat) (pf : x = y), x = y.
 eauto.
 Qed.

@@ -17,7 +17,7 @@ type assertion =
 
 exception Unsupported
 let true_typed = 
-  Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"]
+  Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"; Sexp.Atom "0"]
 
 let assertion_to_equality a =
   match a with
@@ -67,7 +67,7 @@ let log_misc_tracing: unit -> bool =
 let empty_query_accumulator () =
   let ds = Hashtbl.create 20 in
   (* always-present constants (even if they don't appear in any expression) *)
-  Hashtbl.replace ds "annot" { arity = 2; is_nonprop_ctor = false;};
+  Hashtbl.replace ds "annot" { arity = 3; is_nonprop_ctor = false;};
   Hashtbl.replace ds "&True" { arity = 0; is_nonprop_ctor = false;};
   Hashtbl.replace ds "&False" { arity = 0; is_nonprop_ctor = false;};
   { declarations = ds;
@@ -794,13 +794,15 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       else
         let sigma, tp = Typing.type_of env sigma e in
         Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
-                  process_expr handle_evar true env sigma fn_metadatas tp])
+                  process_expr handle_evar true env sigma fn_metadatas tp;
+                  Sexp.Atom "0"]) (* TODO replace by appropriate ffn? *)
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       let sigma, tp = Typing.type_of env sigma e in
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
-        Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp] 
+        Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp;
+                    Sexp.Atom "0"] (* TODO *)
        else
             Sexp.Atom n) 
                                     in
@@ -815,7 +817,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       Sexp.Atom z
       else
          Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
-                    process_expr handle_evar true env sigma fn_metadatas tp]))
+                    process_expr handle_evar true env sigma fn_metadatas tp;
+                    Sexp.Atom "0"])) (* TODO *)
   with NotACoqNumber ->
         let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
@@ -829,7 +832,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                         List.map (process_expr handle_evar is_type env sigma fn_metadatas )
                           (Array.to_list args)); 
                           (* No evar in types? *)
-                        process_expr handle_evar true env sigma fn_metadatas tp])
+                        process_expr handle_evar true env sigma fn_metadatas tp;
+                        Sexp.Atom "0"]) (* TODO *)
         | Constr.Prod (b, tp, body) ->
           if EConstr.Vars.noccurn sigma 1 body then
             Sexp.List ([Sexp.Atom "arrow"; 

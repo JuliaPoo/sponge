@@ -668,7 +668,7 @@ let print_constr_expr env sigma e =
 let mkCApp f args =
   Constrexpr_ops.mkAppC (f, args)
 
-let cHole = CAst.make (Constrexpr.CHole (None, Namegen.IntroAnonymous, None))
+let cHole = CAst.make (Constrexpr.CHole (None, Namegen.IntroAnonymous))
 
 let compose_constr_expr_proofs revlist =
   let rec f revlist acc =
@@ -1160,8 +1160,10 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
          (fun coqfalse ->
            Tacticals.tclTHENLIST
              [ Tactics.elim_type coqfalse;
-               Tacticals.tclTHENFIRST
-                 (Tactics.assert_as true None None t_ctr) tac_proof_equal ]))
+               Tactics.assert_by Names.Anonymous t_ctr tac_proof_equal]
+               (* Tacticals.tclTHENFIRST
+                 (Tactics.assert_as true None None t_ctr) tac_proof_equal ] *)
+                 ))
     end
 
 (* Borrowed from ltac/evar_tactics.ml because it was not public *)

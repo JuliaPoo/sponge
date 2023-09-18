@@ -6,6 +6,14 @@ let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs"
 let recompilation_proof_file_path = "/tmp/egg_proof.txt"
 let _coquetier_input_path = egg_repo_path ^ "/coquetier_input.smt2"
 let _coquetier_proof_file_path = egg_repo_path ^ "/coquetier_proof_output.txt"
+let ffn_c = ref 0
+let ffn_firstfree () = !ffn_c
+let ffn_variables old_firstfree new_firstfree = 
+  List.init (new_firstfree - old_firstfree) (fun x -> "ffn_" ^ string_of_int (x + old_firstfree))
+let ffn_gensym () =
+  let v = !ffn_c in
+  ffn_c := v + 1;
+  "ffn_" ^ string_of_int v
 
 type assertion =
   | AEq of Sexp.t * Sexp.t
@@ -42,28 +50,37 @@ type query_accumulator =
     initial_exprs: (Sexp.t, unit) Hashtbl.t }
 
 let get_backend_name: unit -> string =
-  Goptions.declare_string_option_and_ref
-    ~depr:false
-    ~key:["Egg"; "Backend"]
-    ~value:"FileBasedEggBackend"
+        let dep = {Deprecation.since = None ; Deprecation.note = None } in 
+        let str = Goptions.declare_string_option_and_ref 
+                ~depr:(dep)
+                ~key:["Egg"; "Backend"] 
+                ~value:"FileBasedEggBackend" 
+                ~stage:(Interp) () in 
+        str.get 
 
 let log_ignored_hyps: unit -> bool =
-  Goptions.declare_bool_option_and_ref
-    ~depr:false
+  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
+  (Goptions.declare_bool_option_and_ref
+    ~depr:dep
     ~key:["Egg";"Log";"Ignored";"Hypotheses"]
     ~value:false
+    ()).get
+
 
 let log_proofs: unit -> bool =
-  Goptions.declare_bool_option_and_ref
-    ~depr:false
+  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
+  (Goptions.declare_bool_option_and_ref
+    ~depr:dep
     ~key:["Egg";"Log";"Proofs"]
-    ~value:false
+    ~value:false ()).get
 
 let log_misc_tracing: unit -> bool =
-  Goptions.declare_bool_option_and_ref
-    ~depr:false
+  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
+  (Goptions.declare_bool_option_and_ref
+    ~depr:dep
     ~key:["Egg";"Misc";"Tracing"]
-    ~value:false
+    ~value:false ()).get
+
 let empty_query_accumulator () =
   let ds = Hashtbl.create 20 in
   (* always-present constants (even if they don't appear in any expression) *)
@@ -795,14 +812,14 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         let sigma, tp = Typing.type_of env sigma e in
         Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
                   process_expr handle_evar true env sigma fn_metadatas tp;
-                  Sexp.Atom "0"]) (* TODO replace by appropriate ffn? *)
+                  Sexp.Atom (ffn_gensym ()) ]) (* TODO replace by appropriate ffn? *)
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       let sigma, tp = Typing.type_of env sigma e in
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
         Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp;
-                    Sexp.Atom "0"] (* TODO *)
+                    Sexp.Atom (ffn_gensym ())] (* TODO *)
        else
             Sexp.Atom n) 
                                     in
@@ -818,7 +835,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       else
          Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
                     process_expr handle_evar true env sigma fn_metadatas tp;
-                    Sexp.Atom "0"])) (* TODO *)
+                    Sexp.Atom (ffn_gensym ())])) (* TODO *)
   with NotACoqNumber ->
         let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
@@ -833,7 +850,7 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                           (Array.to_list args)); 
                           (* No evar in types? *)
                         process_expr handle_evar true env sigma fn_metadatas tp;
-                        Sexp.Atom "0"]) (* TODO *)
+                        Sexp.Atom (ffn_gensym ())]) (* TODO *)
         | Constr.Prod (b, tp, body) ->
           if EConstr.Vars.noccurn sigma 1 body then
             Sexp.List ([Sexp.Atom "arrow"; 
@@ -917,8 +934,16 @@ let rec biggest_closed_subexprs' (e : Sexp.t) : Sexp.t list option =
                       | Some(subterms) -> acc @ subterms)
                     []
                     (List.combine l r))
+let rec rm_ffn (e:Sexp.t) : Sexp.t =
+  match e with 
+  | Sexp.Atom(s) ->
+    if (String.starts_with ~prefix:"?ffn" s) then Sexp.Atom("0") else e
+  | Sexp.List(l)->
+    Sexp.List(List.map rm_ffn l) 
+ 
+
 let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
-      match biggest_closed_subexprs' e with
+      match biggest_closed_subexprs' (rm_ffn e) with
       | Some(l) -> l
       | None -> [e] 
 (* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
@@ -940,6 +965,8 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
     List.iter (register_expr qa) (biggest_closed_subexprs e2);
     res in
 
+  let snapshot_ffn = ref 0 in
+ 
   let rec process_impls name env sideconditions manual_triggers t =
     match destruct_trigger sigma t with
     | Some (tr_exprs, body) ->
@@ -968,11 +995,15 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
                                      | Context.Rel.Declaration.LocalDef(_,_,_) -> acc)
               env ~init:([]) in
         if log_misc_tracing() then Printf.printf "Add rule" else ();
+
+        let clc = to_assertion env t in (* Careful this call is stateful, it updates the ffn number *)
+        let new_ffn = ffn_firstfree () in
+        let old_ffn = !snapshot_ffn in
         Queue.push {
                  rulename = name;
-                 quantifiers = List.rev quant_names;
+                 quantifiers = List.rev quant_names @ (ffn_variables old_ffn new_ffn);
                  sideconditions = List.rev sideconditions;
-                 conclusion = to_assertion env t;
+                 conclusion = clc;
                  triggers = manual_triggers;
                } qa.rules in
 
@@ -998,23 +1029,30 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
       try
         let sigma, tp = Typing.type_of env sigma (EConstr.of_constr t) in
         if Termops.is_Prop sigma tp then
-          process_foralls name env (EConstr.of_constr t)
+          begin 
+            snapshot_ffn :=  ffn_firstfree ();
+            process_foralls name env (EConstr.of_constr t)
+          end
         else raise Unsupported
       with
         Unsupported -> if log_ignored_hyps () then 
           Printf.printf "Dropped %s\n" name
     end
   | LocalDef (id, t, _tp) -> begin
+    (* Double-check that this is for let _ := _ in  *)
       let rawname = Names.Id.to_string id.binder_name in
       try
         let name = "&" ^ rawname in
+        snapshot_ffn :=  ffn_firstfree ();
         register_metadata qa.declarations name {arity = 0; is_nonprop_ctor= false};
         let lhs = Sexp.Atom name in
         let rhs = process_expr false false env sigma qa.declarations (EConstr.of_constr t) in
         register_expr qa lhs;
         register_expr qa rhs;
+        let new_ffn = ffn_firstfree () in
+        let old_ffn = !snapshot_ffn in
         Queue.push { rulename = rawname ^ "$def";
-                     quantifiers = [];
+                     quantifiers = (ffn_variables old_ffn new_ffn);
                      sideconditions = [];
                      conclusion = AEq (lhs, rhs);
                      triggers = [] } qa.rules

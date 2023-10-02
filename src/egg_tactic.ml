@@ -13,7 +13,7 @@ let ffn_variables old_firstfree new_firstfree =
 let ffn_gensym () =
   let v = !ffn_c in
   ffn_c := v + 1;
-  "ffn_" ^ string_of_int v
+  "?ffn_" ^ string_of_int v
 
 type assertion =
   | AEq of Sexp.t * Sexp.t
@@ -943,9 +943,11 @@ let rec rm_ffn (e:Sexp.t) : Sexp.t =
  
 
 let biggest_closed_subexprs (e : Sexp.t) : Sexp.t list =
-      match biggest_closed_subexprs' (rm_ffn e) with
+      let e = rm_ffn e in 
+      match biggest_closed_subexprs' e with
       | Some(l) -> l
       | None -> [e] 
+
 (* hyp:      Context.Named.Declaration (LocalAssum or LocalDef) *)
 let eggify_hyp env sigma (qa: query_accumulator) hyp =
 
@@ -1090,6 +1092,7 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
     if log_misc_tracing() then print_endline("Went through hypothesis") else ();
     flush stdout;
     let g = process_expr false false env sigma qa.declarations (Goal.concl gl) in
+    let g = rm_ffn g in 
     if log_misc_tracing() then print_endline("Processed goal") else ();
     flush stdout;
     let (module B) = get_backend () in
@@ -1204,6 +1207,7 @@ let egg_search_evars ffn_limit =
     if log_misc_tracing() then print_endline("Start goal for evar") else ();
     flush stdout;
     let g = process_expr true false env sigma qa.declarations (Goal.concl gl) in
+    let g = rm_ffn g in
     goal_subexpr env sigma qa (Goal.concl gl);
     if log_misc_tracing() then print_endline("goal processed, added to init expr") else ();
     flush stdout;

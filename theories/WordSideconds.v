@@ -56,7 +56,6 @@ Ltac consts :=
     Qed.
 
   Lemma coollemma : forall (x y : N), x = y.
-
     let c := open_constr:(@id _ _) in inspect c.
   Abort.
 Section WithLib.
@@ -101,7 +100,8 @@ equality as well, just in more steps
 
   Goal (forall x y z, wadd x (wadd y z) = wadd (wadd x y) z).
   intros.
-  egg_simpl_to 4 ( wadd (wadd x y) z).
+  Set Egg Misc Tracing.
+  (* egg_simpl_to 4 ( wadd (wadd x y) z). *)
   Abort.
 
   Ltac pose_const_sideconds :=
@@ -325,3 +325,4 @@ Unshelve.
 *)
 
 End WithLib.
+*)

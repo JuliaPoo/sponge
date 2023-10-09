@@ -10,7 +10,7 @@ let ffn_c = ref 0
 let ffn_firstfree () = !ffn_c
 let ffn_variables old_firstfree new_firstfree = 
   List.init (new_firstfree - old_firstfree) (fun x -> "ffn_" ^ string_of_int (x + old_firstfree))
-let ffn_gensym () =
+let __ffn_gensym () =
   let v = !ffn_c in
   ffn_c := v + 1;
   "?ffn_" ^ string_of_int v
@@ -66,6 +66,13 @@ let log_ignored_hyps: unit -> bool =
     ~value:false
     ()).get
 
+let set_ffn_int : unit -> int =
+  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
+  (Goptions.declare_int_option_and_ref
+    ~depr:dep
+    ~key:["Egg";"Ffn"]
+    ~value:4
+    ()).get
 
 let log_proofs: unit -> bool =
   let dep = {Deprecation.since = None ; Deprecation.note = None } in 
@@ -357,7 +364,8 @@ module FileBasedEggBackend : BACKEND = struct
     if log_misc_tracing() then Printf.printf "Wrote %s\n" t.query_file_path else ();
     flush stdout;
     (* let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in *)
-    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    let ffn = "EGG_FFN="^string_of_int (set_ffn_int ()) in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
     (* Printf.printf "%s\n" command; *)
     (* flush stdout; *)
     let status = Sys.command command in
@@ -380,7 +388,8 @@ module FileBasedEggBackend : BACKEND = struct
     close_out t.oc;
     if log_misc_tracing() then Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path else ();
     flush stdout;
-    let command = "cd \"" ^ egg_repo_path ^ "\" && ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    let ffn = "EGG_FFN="^string_of_int (set_ffn_int ()) in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
     (* Printf.printf "%s\n" command; *)
     (* flush stdout; *)
     let _status = Sys.command command in
@@ -812,14 +821,16 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         let sigma, tp = Typing.type_of env sigma e in
         Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
                   process_expr handle_evar true env sigma fn_metadatas tp;
-                  Sexp.Atom (ffn_gensym ()) ]) (* TODO replace by appropriate ffn? *)
+                  (* Sexp.Atom (ffn_gensym ()) ])  *)
+                  Sexp.Atom "0" ]) (* TODO replace by appropriate ffn? *)
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
       let sigma, tp = Typing.type_of env sigma e in
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
         Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp;
-                    Sexp.Atom (ffn_gensym ())] (* TODO *)
+                    (* Sexp.Atom (ffn_gensym ())] *)
+                  Sexp.Atom "0" ] (* TODO replace by appropriate ffn? *)
        else
             Sexp.Atom n) 
                                     in
@@ -835,7 +846,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       else
          Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
                     process_expr handle_evar true env sigma fn_metadatas tp;
-                    Sexp.Atom (ffn_gensym ())])) (* TODO *)
+                  Sexp.Atom "0" ])) (* TODO replace by appropriate ffn? *)
+                    (* Sexp.Atom (ffn_gensym ())])) TODO *)
   with NotACoqNumber ->
         let sigma, tp = Typing.type_of env sigma e in
         match EConstr.kind sigma e with
@@ -850,7 +862,8 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                           (Array.to_list args)); 
                           (* No evar in types? *)
                         process_expr handle_evar true env sigma fn_metadatas tp;
-                        Sexp.Atom (ffn_gensym ())]) (* TODO *)
+                        (* Sexp.Atom (ffn_gensym ())]) TODO *)
+                  Sexp.Atom "0" ]) (* TODO replace by appropriate ffn? *)
         | Constr.Prod (b, tp, body) ->
           if EConstr.Vars.noccurn sigma 1 body then
             Sexp.List ([Sexp.Atom "arrow"; 

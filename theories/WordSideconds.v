@@ -3,7 +3,6 @@ Require Import Coq.ZArith.ZArith. Open Scope Z_scope.
 Require Import Coq.micromega.Lia.
 Require Import Coq.Logic.PropExtensionality.
 Set Default Goal Selector "!".
-
 Lemma invert_eq_False: forall {P: Prop}, P = False -> ~ P.
 Proof. intros. intro C. subst. assumption. Qed.
 Lemma prove_eq_False: forall {P: Prop}, ~ P -> P = False.
@@ -101,7 +100,8 @@ equality as well, just in more steps
   Goal (forall x y z, wadd x (wadd y z) = wadd (wadd x y) z).
   intros.
   Set Egg Misc Tracing.
-  (* egg_simpl_to 4 ( wadd (wadd x y) z). *)
+  egg_simpl_to 4 ( wadd (wadd x y) z).
+  simpl.
   Abort.
 
   Ltac pose_const_sideconds :=
@@ -139,10 +139,12 @@ equality as well, just in more steps
     pose proof Z.le_lt_trans as Z_le_lt_trans.
     pose proof Z.mod_le as Z_mod_le.
     Set Egg Misc Tracing.
-    egg_simpl_goal 6. (* before, 5 was sufficient here, but now some loopy rules
+
+    egg_simpl_goal 6. 
+    all: try exact C1.
+    all: eauto; trivial. (* before, 5 was sufficient here, but now some loopy rules
                          that very quickly generated relevant terms don't apply any
                          more, and we have to take a longer path *)
-    1: exact C1.
     (* egg_simpl_goal 6. *)
     (* 4: exact I. *)
     (* transitivity leads to uninferrable evars! *)
@@ -175,6 +177,12 @@ equality as well, just in more steps
   Qed.
 
 
+  Lemma test: forall a b c d e f, (wadd a (wadd b (wadd c (wadd d (wadd e f))))) = wadd (wadd (wadd a (wadd b f)) c) (wadd d e).
+    intros.
+    egg_simpl_goal 3.
+    simpl.
+    reflexivity.
+  Qed.
   Lemma bsearch_goal1_proof_egg: bsearch_goal1.
   Proof.
     unfold bsearch_goal1. intros. pose_const_sideconds. pose_lib_lemmas.
@@ -186,8 +194,9 @@ equality as well, just in more steps
       all: 
       egg_simpl_goal 4;  try assumption; eauto; try exact I.
       all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
+      all: egg_simpl_goal 4;  try assumption; eauto; try exact I.
     }
-
+(* 
     { 
       cbv beta.
       egg_simpl_goal 4;  try assumption; eauto; try exact I.
@@ -198,7 +207,7 @@ equality as well, just in more steps
     {
      try exact I.
     }
-   
+    *)
       (* egg_simpl_goal 6;  try assumption; intuition eauto.
       assert (forall {t: Type} (x y : t), (x<>y) -> (y <> x)).
         {intros.
@@ -325,4 +334,3 @@ Unshelve.
 *)
 
 End WithLib.
-*)

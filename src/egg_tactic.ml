@@ -59,17 +59,13 @@ let get_backend_name: unit -> string =
         str.get 
 
 let log_ignored_hyps: unit -> bool =
-  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
   (Goptions.declare_bool_option_and_ref
-    ~depr:dep
     ~key:["Egg";"Log";"Ignored";"Hypotheses"]
     ~value:false
     ()).get
 
 let set_ffn_int : unit -> int =
-  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
   (Goptions.declare_int_option_and_ref
-    ~depr:dep
     ~key:["Egg";"Ffn"]
     ~value:4
     ()).get
@@ -82,9 +78,7 @@ let log_proofs: unit -> bool =
     ~value:false ()).get
 
 let log_misc_tracing: unit -> bool =
-  let dep = {Deprecation.since = None ; Deprecation.note = None } in 
   (Goptions.declare_bool_option_and_ref
-    ~depr:dep
     ~key:["Egg";"Misc";"Tracing"]
     ~value:false ()).get
 

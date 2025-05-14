@@ -359,7 +359,7 @@ module FileBasedEggBackend : BACKEND = struct
     flush stdout;
     (* let command = "cd \"" ^ egg_repo_path ^ "\" && time ./target/release/coquetier" in *)
     let ffn = "EGG_FFN="^string_of_int (set_ffn_int ()) in
-    let command = "cd \"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    let command = "cd \"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^ "\"" ^t.query_file_path ^ "\"" ^ " " ^ "\"" ^ t.response_file_path ^ "\"" in
     (* Printf.printf "%s\n" command; *)
     (* flush stdout; *)
     let status = Sys.command command in
@@ -383,7 +383,7 @@ module FileBasedEggBackend : BACKEND = struct
     if log_misc_tracing() then Printf.printf "\n Wrote evarsearch %s\n" t.query_file_path else ();
     flush stdout;
     let ffn = "EGG_FFN="^string_of_int (set_ffn_int ()) in
-    let command = "cd \"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
+    let command = "cd \"" ^ "\"" ^ egg_repo_path ^ "\" && "^ffn^" ./target/release/coquetier " ^t.query_file_path ^ " " ^ t.response_file_path in
     (* Printf.printf "%s\n" command; *)
     (* flush stdout; *)
     let _status = Sys.command command in

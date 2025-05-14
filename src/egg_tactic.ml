@@ -1,7 +1,7 @@
 open Sexplib (* opam install sexplib *)
 open Proofview
 
-let egg_repo_path = "/opt/link_to_egg" (* adapt as needed *)
+let egg_repo_path = "../egg" (* adapt as needed *)
 let rust_rules_path = egg_repo_path ^ "/src/rw_rules.rs"
 let recompilation_proof_file_path = "/tmp/egg_proof.txt"
 let _coquetier_input_path = egg_repo_path ^ "/coquetier_input.smt2"
@@ -671,7 +671,26 @@ let print_constr_expr env sigma e =
 let mkCApp f args =
   Constrexpr_ops.mkAppC (f, args)
 
-let cHole = CAst.make (Constrexpr.CHole (None, Namegen.IntroAnonymous))
+(*
+8.18:
+
+CHole of Evar_kinds.t option * Namegen.intro_pattern_naming_expr
+
+
+8.20:
+CHole of Evar_kinds.glob_evar_kind option
+
+type glob_evar_kind =
+| GImplicitArg of Names.GlobRef.t * int * Names.Id.t option * bool
+| GBinderType of Names.Name.t
+| GNamedHole of bool * Names.Id.t
+| GQuestionMark of question_mark
+| GCasesType
+| GInternalHole
+| GImpossibleCase
+*)
+(* let cHole = CAst.make (Constrexpr.CHole (None, Namegen.IntroAnonymous)) *)
+let cHole = CAst.make (Constrexpr.CHole None)
 
 let compose_constr_expr_proofs revlist =
   let rec f revlist acc =
@@ -862,8 +881,16 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
           if EConstr.Vars.noccurn sigma 1 body then
             Sexp.List ([Sexp.Atom "arrow"; 
             process_expr handle_evar true env sigma fn_metadatas tp;
+            (*
+              Error:
+                This expression has type
+                  (Names.name, Sorts.relevance) Context.pbinder_annot
+                but an expression was expected of type
+                  (Names.name, EConstr.ERelevance.t) Context.pbinder_annot
+            *)
             let env = EConstr.push_rel 
-                      (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp))
+                      (* (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp)) *)
+                      (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous EConstr.ERelevance.relevant, tp))
                       env in
             process_expr handle_evar true env sigma fn_metadatas body;
             ])
@@ -990,7 +1017,15 @@ let eggify_hyp env sigma (qa: query_accumulator) hyp =
            let env = EConstr.push_rel 
                         (* Maybe we can just push the binder b directly, instead of
                         making an anonymous binder? *) 
-                        (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp))
+                        (*
+                          Error:
+                            This expression has type
+                              (Names.name, Sorts.relevance) Context.pbinder_annot
+                            but an expression was expected of type
+                              (Names.name, EConstr.ERelevance.t) Context.pbinder_annot
+                        *)
+                        (* (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous Sorts.Relevant, tp)) *)
+                        (Context.Rel.Declaration.LocalAssum (Context.make_annot Names.Anonymous EConstr.ERelevance.relevant, tp))
                         env in
            process_impls name env (side :: sideconditions) manual_triggers body
          else raise Unsupported (* foralls after impls are not supported *)
@@ -1169,7 +1204,10 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
        tclBIND (Tacticals.pf_constr_of_global (Coqlib.(lib_ref "core.False.type")))
          (fun coqfalse ->
            Tacticals.tclTHENLIST
-             [ Tactics.elim_type coqfalse;
+             [
+               (* elim_type depreciated: https://github.com/rocq-prover/rocq/pull/16904 *)
+               (* Tactics.elim_type coqfalse; *)
+               Tactics.exfalso;
                Tactics.assert_by Names.Anonymous t_ctr tac_proof_equal]
                (* Tacticals.tclTHENFIRST
                  (Tactics.assert_as true None None t_ctr) tac_proof_equal ] *)
@@ -1276,10 +1314,18 @@ let kind_to_str sigma c =
   | Constr.Case (c, u, b, r, d, x, y) -> "Case"
   | Constr.Fix f -> "Fix"
   | Constr.CoFix f -> "CoFix"
-  | Constr.Proj (p, c) -> "Proj"
+  (*
+    8.18:
+    | Proj of Names.Projection.t * 'constr
+    8.20:
+    | Proj of Names.Projection.t * 'r * 'constr
+  *)
+  (* | Constr.Proj (p, c) -> "Proj" *)
+  | Constr.Proj (p, r, c) -> "Proj"
   | Constr.Int i -> "Int"
   | Constr.Float f -> "Float"
   | Constr.Array (u, a, b, c) -> "Array"
+  | Constr.String s -> "String"
 
 let inspect c =
   Goal.enter begin fun gl ->

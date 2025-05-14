@@ -8,3 +8,15 @@
 .nia.cache
 *~
 META
+*.d
+*.cmi
+*.cmt
+*.cmti
+g_egg.ml
+Makefile.coq*
+.vscode
+*.a
+*.cmx
+*.cmxa
+*.cmxs
+*.o

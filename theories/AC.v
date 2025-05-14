@@ -56,7 +56,7 @@ Section WithLemmas.
 
     egg_simpl_goal 4; cbv beta.
     (* at least 4 is needed to make v appear in goal *)
-    1: reflexivity.
+    1: auto.
 
     (* obtaining all associative reorderings might still require high ffn, but
        high ffn might be more feasible if we don't add commutativity *)

@@ -20,12 +20,14 @@ type assertion =
   | AProp of Sexp.t
 
   type proof =
-  | PSteps of string list
-  | PContradiction of string * string list
+  | PSteps of string list * string list
+  | PContradiction of string list * string * (string) list
 
 exception Unsupported
 let true_typed = 
-  Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"; Sexp.Atom "0"]
+  Sexp.List [Sexp.Atom "annot"; Sexp.Atom "&True"; Sexp.Atom "&Prop"
+    (* ; Sexp.Atom "0" *)
+  ]
 
 let assertion_to_equality a =
   match a with
@@ -109,6 +111,7 @@ let strip_pre_suff s prefix suffix =
     failwith ("expected '" ^ prefix ^ "..." ^ suffix ^"', but got '" ^ s ^ "'")
 
 let proof_file_to_proof filepath =
+  let constfold = ref [] in
   let res = ref [] in
   let chan = open_in filepath in
   let contradiction = ref None in
@@ -122,21 +125,29 @@ let proof_file_to_proof filepath =
       contradiction:= Some(middle)
     else
      ());
-  ignore(input_line chan);
-  (try
+  ignore(input_line chan); (* unshelve *)
+  (
     let line = ref (input_line chan) in
-    while not (String.starts_with ~prefix:"idtac" !line) do
-      let prefix = "eapply " in
-      let suffix = ";" in
+    while (String.starts_with ~prefix:"assert " !line) do
+      let prefix = "assert " in
+      let suffix = " by reflexivity." in
       let middle = strip_pre_suff !line prefix suffix in
-      res := middle :: !res;
+      constfold := middle :: !constfold;
       line := input_line chan
-    done
-  with End_of_file -> ());
+    done;
+    try
+      while not (String.starts_with ~prefix:"idtac" !line) do
+        let prefix = "eapply " in
+        let suffix = ";" in
+        let middle = strip_pre_suff !line prefix suffix in
+        res := middle :: !res;
+        line := input_line chan
+      done
+    with End_of_file -> ());
   close_in chan;
   match !contradiction with
-  | Some(c) -> PContradiction(c, List.rev !res)
-  | None -> PSteps (List.rev !res)
+  | Some(c) -> PContradiction (List.rev !constfold, c, List.rev !res)
+  | None -> PSteps (List.rev !constfold, List.rev !res)
 
 
 let evar_instantiate_from_file filepath =
@@ -835,7 +846,9 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
         Sexp.List [Sexp.Atom "annot"; Sexp.Atom name; 
                   process_expr handle_evar true env sigma fn_metadatas tp;
                   (* Sexp.Atom (ffn_gensym ()) ])  *)
-                  Sexp.Atom "0" ]) (* TODO replace by appropriate ffn? *)
+                  (* Sexp.Atom "0"  *)
+                  (* TODO replace by appropriate ffn? *)
+                  ])
     else (
       let n = (if is_nonprop_ctor then "!" else "&") ^ name in (* to avoid clashes with predefined names from smtlib *)
       register_metadata fn_metadatas n {arity; is_nonprop_ctor};
@@ -843,7 +856,9 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
       if show_types && arity = 0 && not (Termops.is_Set sigma tp) && not (Termops.is_Type sigma tp) then 
         Sexp.List [ Sexp.Atom "annot"; Sexp.Atom n; process_expr handle_evar true env sigma fn_metadatas tp;
                     (* Sexp.Atom (ffn_gensym ())] *)
-                  Sexp.Atom "0" ] (* TODO replace by appropriate ffn? *)
+                    (* Sexp.Atom "0"  *)
+                    (* TODO replace by appropriate ffn? *)
+                  ]
        else
             Sexp.Atom n) 
                                     in
@@ -852,14 +867,17 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
     (* treat Z literals as uninterpreted, so that they can have the same smtlib type U
        as everything else *)
     let sigma, tp = Typing.type_of env sigma e in
-    let z = "!" ^ Stdlib.string_of_int (z_to_int sigma e) in
+    (* let z = "!" ^ Stdlib.string_of_int (z_to_int sigma e) in *)
+    let z = Stdlib.string_of_int (z_to_int sigma e) in
     register_metadata fn_metadatas z { arity=0; is_nonprop_ctor = true};
     (if is_type then 
       Sexp.Atom z
       else
          Sexp.List ([Sexp.Atom "annot"; Sexp.Atom z; 
                     process_expr handle_evar true env sigma fn_metadatas tp;
-                  Sexp.Atom "0" ])) (* TODO replace by appropriate ffn? *)
+                    (* Sexp.Atom "0" *)
+                    (* TODO replace by appropriate ffn? *)
+                    ]))
                     (* Sexp.Atom (ffn_gensym ())])) TODO *)
   with NotACoqNumber ->
         let sigma, tp = Typing.type_of env sigma e in
@@ -876,7 +894,9 @@ let rec process_expr  (handle_evar : bool) (is_type : bool) env sigma fn_metadat
                           (* No evar in types? *)
                         process_expr handle_evar true env sigma fn_metadatas tp;
                         (* Sexp.Atom (ffn_gensym ())]) TODO *)
-                  Sexp.Atom "0" ]) (* TODO replace by appropriate ffn? *)
+                        (* Sexp.Atom "0" *)
+                        (* TODO replace by appropriate ffn? *)
+                        ])
         | Constr.Prod (b, tp, body) ->
           if EConstr.Vars.noccurn sigma 1 body then
             Sexp.List ([Sexp.Atom "arrow"; 
@@ -1169,21 +1189,33 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
     let pf = B.minimize b g ffn_limit in
 
     (match pf with
-    | PSteps(pf_steps) ->
+    | PSteps(constfold_steps, pf_steps) ->
       let reversed_pf = List.rev pf_steps in
       let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
       if log_proofs () then (
         print_endline "Composed proof:";
         print_endline (print_constr_expr env sigma composed_pf);
       ) else ();
-      Refine.refine ~typecheck:true (fun sigma ->
-          let (sigma, constr_pf) = Constrintern.interp_constr_evars env sigma composed_pf in
-          if log_proofs () then (
-            Feedback.msg_notice
-              Pp.(str"Proof: " ++ Printer.pr_econstr_env env sigma constr_pf);
-          ) else ();
-          (sigma, constr_pf))
-    | PContradiction(ctr, pf_steps) ->
+      let proof = [] in
+      let rec uwu constfold_steps acc i = match constfold_steps with
+        | [] -> acc
+        | step :: xs ->
+          (* let constr = parse_constr_expr step in
+          let (_sigma, t_ctr) = Constrintern.interp_constr_evars env sigma constr in
+          let name = (Names.Name.mk_name (Names.Id.of_string (Printf.sprintf "special_rule_%d" i))) in
+          let assert_statement = Tactics.assert_by name t_ctr Tactics.reflexivity in
+          uwu xs (assert_statement :: acc) (i+1) *)
+          uwu xs (Tacticals.tclTRY Tactics.reflexivity :: acc) (i+1)
+      in
+      let tac_proof_equal = Refine.refine ~typecheck:true (fun sigma ->
+        Constrintern.interp_constr_evars env sigma composed_pf
+      )
+      in
+      let final_proof = tac_proof_equal :: (uwu constfold_steps proof 0) in
+      Tacticals.tclTHENLIST (final_proof)
+
+    | PContradiction(constfold_steps, ctr, pf_steps) ->
+       (* TODO: Perform constant fold for PContradiction *)
        let reversed_pf = List.rev pf_steps in
        let composed_pf = compose_constr_expr_proofs (List.map parse_constr_expr reversed_pf) in
        let ctr_coq = parse_constr_expr ctr in

@@ -1211,7 +1211,7 @@ let egg_simpl_goal ffn_limit (id_simpl : Names.GlobRef.t option) terms =
         Constrintern.interp_constr_evars env sigma composed_pf
       )
       in
-      let final_proof = tac_proof_equal :: (uwu constfold_steps proof 0) in
+      let final_proof = tac_proof_equal :: (uwu pf_steps proof 0) in
       Tacticals.tclTHENLIST (final_proof)
 
     | PContradiction(constfold_steps, ctr, pf_steps) ->
